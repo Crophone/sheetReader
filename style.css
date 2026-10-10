@@ -373,6 +373,56 @@ img { -webkit-user-drag: none; }
 .field input:focus { border-color: var(--accent); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 
+/* ---------------- 管理页（网址导入 / 上传 / 排序） ---------------- */
+.web-import {
+  flex: none;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.web-import-title { display: flex; align-items: baseline; gap: 10px; margin-bottom: 9px; }
+.web-import-title span { color: var(--muted); font-size: 12px; }
+.web-import-row { display: flex; gap: 8px; }
+.web-import-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--panel-2);
+  outline: none;
+}
+.web-import-row input:focus { border-color: var(--accent); }
+
+.preview-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--mask-bg);
+  backdrop-filter: blur(3px);
+}
+.preview-panel {
+  width: min(1100px, 96vw);
+  height: min(900px, 92vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.preview-head { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.preview-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; text-align: center; background: var(--stage-bg); }
+.preview-body img { max-width: 100%; height: auto; background: var(--paper); }
+
 /* ---------------- 管理页（上传 / 排序） ---------------- */
 .page-head {
   flex: none;
@@ -476,13 +526,17 @@ img { -webkit-user-drag: none; }
 }
 
 .page-card .thumb {
+  width: 100%;
   height: 240px;
+  padding: 0;
+  border: 0;
   background: var(--thumb-bg);
   border-radius: 7px;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: zoom-in;
 }
 .page-card .thumb img {
   max-width: 100%;
@@ -825,6 +879,9 @@ img { -webkit-user-drag: none; }
   .head-inputs { flex: 1; }
   .song-input { width: 100% !important; min-width: 0; }
   .ph-actions .btn { flex: 1; }
+  .web-import-title { display: block; }
+  .web-import-title span { display: block; margin-top: 3px; }
+  .web-import-row { flex-direction: column; }
   .upload-zone { padding: 18px 12px; }
   .pages-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 8px; }
   .page-card .thumb { height: 170px; }

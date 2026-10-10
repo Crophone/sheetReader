@@ -48,6 +48,13 @@ window.SHEETREADER_BPM_API = {
   responsePath: 'bpm'
 };
 */
+/* 可选：配置网站谱图提取服务。接口返回 { "images": ["https://.../1.jpg"] }。
+window.SHEETREADER_SHEET_IMPORT_API = {
+  endpoint: 'https://api.example.com/extract-sheet-images?url={url}',
+  apiKey: '',
+  headerName: 'X-Api-Key'
+};
+*/
 </script>
 <script src="app.js"></script>
 </body>

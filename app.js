@@ -177,6 +177,39 @@ function canvasToBlob(canvas, type, quality) {
   return new Promise(res => canvas.toBlob(b => res(b), type, quality));
 }
 
+/* 识别并裁掉图片底部接近白色的连续空白，保留少量安全边距。 */
+function detectContentBottom(img) {
+  const sampleW = Math.min(900, img.naturalWidth);
+  const sampleH = Math.max(1, Math.round(img.naturalHeight * sampleW / img.naturalWidth));
+  const c = document.createElement('canvas');
+  c.width = sampleW; c.height = sampleH;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, sampleW, sampleH);
+  const data = ctx.getImageData(0, 0, sampleW, sampleH).data;
+  const stepX = Math.max(1, Math.floor(sampleW / 180));
+  let bottom = sampleH - 1;
+  for (let y = sampleH - 1; y >= 0; y--) {
+    let dark = 0, sampled = 0;
+    for (let x = 0; x < sampleW; x += stepX) {
+      const i = (y * sampleW + x) * 4;
+      if (data[i + 3] > 20 && Math.min(data[i], data[i + 1], data[i + 2]) < 242) dark++;
+      sampled++;
+    }
+    if (dark / sampled > 0.012) { bottom = y; break; }
+  }
+  const padding = Math.max(8, Math.round(sampleH * 0.012));
+  const keptSampleH = Math.min(sampleH, bottom + 1 + padding);
+  return Math.max(1, Math.round(keptSampleH * img.naturalHeight / sampleH));
+}
+
+async function fetchImageBlob(url) {
+  const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
+  if (!res.ok) throw new Error('图片下载失败（HTTP ' + res.status + '）');
+  const blob = await res.blob();
+  if (!blob.type.startsWith('image/')) throw new Error('网址返回的不是图片');
+  return blob;
+}
+
 /* 顺时针旋转 90°：画布宽高互换后重绘 */
 async function rotatePageBlob(page) {
   const img = await blobToImage(page.blob);
@@ -201,8 +234,9 @@ async function rotatePageBlob(page) {
 async function exportMergedPages(pages, songName) {
   const imgs = [];
   for (const p of pages) imgs.push(await blobToImage(p.blob));
+  const cropHeights = imgs.map(detectContentBottom);
   const W0 = Math.max.apply(null, imgs.map(i => i.naturalWidth));
-  const rawH = imgs.reduce((s, i) => s + i.naturalHeight * W0 / i.naturalWidth, 0);
+  const rawH = imgs.reduce((s, i, idx) => s + cropHeights[idx] * W0 / i.naturalWidth, 0);
   if (!(rawH > 0)) throw new Error('无法计算合并尺寸');
   /* 浏览器画布单边上限约 16000px，超出则整体缩小 */
   const scale = Math.min(1, 16000 / rawH);
@@ -214,9 +248,11 @@ async function exportMergedPages(pages, songName) {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, W, H);
   let y = 0;
-  for (const im of imgs) {
-    const h = im.naturalHeight * W / im.naturalWidth;
-    ctx.drawImage(im, 0, y, W, h);
+  for (let idx = 0; idx < imgs.length; idx++) {
+    const im = imgs[idx];
+    const sourceH = cropHeights[idx];
+    const h = sourceH * W / im.naturalWidth;
+    ctx.drawImage(im, 0, 0, im.naturalWidth, sourceH, 0, y, W, h);
     y += h;
     URL.revokeObjectURL(im.src);
   }
@@ -416,9 +452,16 @@ async function renderEditor(app, songId, token) {
           '<button class="btn primary" id="btn-play-song">' + icon('play') + ' 开始演奏</button>' +
         '</div>' +
       '</div>' +
+      '<div class="web-import">' +
+        '<div class="web-import-title"><b>从吉他谱网站导入</b><span>粘贴曲谱页面网址，自动提取并保存谱图</span></div>' +
+        '<div class="web-import-row">' +
+          '<input id="sheet-url" type="url" inputmode="url" placeholder="https://example.com/song/tab" aria-label="吉他谱网站地址">' +
+          '<button class="btn primary" id="btn-import-url">导入网站谱图</button>' +
+        '</div>' +
+      '</div>' +
       '<div class="upload-zone" id="upload-zone">' + icon('upload', 26) +
         '<p>点击选择谱图，或将图片拖拽到此处（支持一次多选）</p>' +
-        '<span class="uz-tip">上传后可拖拽缩略图调整页序，编号 1、2、3… 会自动实时更新</span>' +
+        '<span class="uz-tip">上传后可点击预览，拖拽缩略图调整页序，编号会实时更新</span>' +
         '<input type="file" id="file-input" accept="image/*" multiple hidden>' +
       '</div>' +
       '<div class="pages-scroll">' +
@@ -430,11 +473,13 @@ async function renderEditor(app, songId, token) {
   const gridEl = $('#pages-grid');
   const zone = $('#upload-zone');
   const fileInput = $('#file-input');
+  const sheetUrlInput = $('#sheet-url');
+  const importUrlBtn = $('#btn-import-url');
 
   function cardHTML(page, i) {
     return '<div class="page-card" draggable="true" data-id="' + esc(page.id) + '" title="拖拽调整顺序">' +
       '<div class="badge">' + (i + 1) + '</div>' +
-      '<div class="thumb"><img src="' + URLPool.make(page.blob) + '" alt="第' + (i + 1) + '页" draggable="false"></div>' +
+      '<button class="thumb preview-page" type="button" title="点击查看第 ' + (i + 1) + ' 页完整内容"><img src="' + URLPool.make(page.blob) + '" alt="第' + (i + 1) + '页" draggable="false"></button>' +
       '<div class="card-tools">' +
         '<button class="tool tool-rotate" title="顺时针旋转 90°">' + icon('rotate', 15) + '</button>' +
         '<button class="tool tool-del" title="删除本页">' + icon('trash', 15) + '</button>' +
@@ -489,6 +534,52 @@ async function renderEditor(app, songId, token) {
     toast('已添加 ' + ok + ' 页，拖拽缩略图可调整顺序');
   }
 
+  async function importFromWebsite() {
+    const sourceUrl = sheetUrlInput.value.trim();
+    try { new URL(sourceUrl); } catch (_) { toast('请输入完整有效的网址'); return; }
+    const cfg = window.SHEETREADER_SHEET_IMPORT_API || {};
+    if (!cfg.endpoint) {
+      toast('未配置网站谱图导入服务，请在 index.html 配置 SHEETREADER_SHEET_IMPORT_API', 'error');
+      return;
+    }
+    importUrlBtn.disabled = true;
+    importUrlBtn.textContent = '正在提取…';
+    try {
+      const apiUrl = cfg.endpoint.replaceAll('{url}', encodeURIComponent(sourceUrl));
+      const headers = { Accept: 'application/json' };
+      if (cfg.apiKey) headers[cfg.headerName || 'X-Api-Key'] = cfg.apiKey;
+      const res = await fetch(apiUrl, { headers });
+      if (!res.ok) throw new Error('提取服务返回 HTTP ' + res.status);
+      const data = await res.json();
+      const imageUrls = Array.isArray(data) ? data : data.images;
+      if (!Array.isArray(imageUrls) || !imageUrls.length) throw new Error('没有找到可导入的曲谱图片');
+      let order = pages.length ? Math.max.apply(null, pages.map(p => p.order)) + 1 : 0;
+      let ok = 0;
+      for (const imageUrl of imageUrls) {
+        try {
+          const blob = await fetchImageBlob(new URL(imageUrl, sourceUrl).href);
+          const meta = await imageMeta(blob);
+          await putPage({ id: uid(), songId: song.id, order: order++, name: '网页谱图-' + (ok + 1), type: blob.type, blob, w: meta.w, h: meta.h, sourceUrl });
+          ok++;
+        } catch (err) { console.error(err); }
+      }
+      if (!ok) throw new Error('图片受跨域或防盗链限制，无法下载');
+      song.sheetSourceUrl = sourceUrl;
+      await saveSong(song);
+      pages = await listPages(songId);
+      refreshGrid();
+      toast('已从网站导入 ' + ok + ' 张谱图');
+    } catch (err) {
+      console.error(err);
+      toast('网站导入失败：' + err.message, 'error');
+    } finally {
+      importUrlBtn.disabled = false;
+      importUrlBtn.textContent = '导入网站谱图';
+    }
+  }
+  importUrlBtn.onclick = importFromWebsite;
+  sheetUrlInput.addEventListener('keydown', e => { if (e.key === 'Enter') importFromWebsite(); });
+
   /* --- 上传交互 --- */
   /* input 是 zone 的子元素，input.click() 的冒泡需要拦下，避免递归触发文件框 */
   zone.addEventListener('click', e => {
@@ -539,13 +630,28 @@ async function renderEditor(app, songId, token) {
     toast('页序已保存');
   });
 
-  /* --- 工具按钮（旋转 / 删除） --- */
+  function openPagePreview(page, index) {
+    const mask = document.createElement('div');
+    mask.className = 'preview-mask';
+    const url = URLPool.make(page.blob);
+    mask.innerHTML = '<div class="preview-panel">' +
+      '<div class="preview-head"><b>第 ' + (index + 1) + ' 页</b><button class="btn icon-btn preview-close" type="button" aria-label="关闭">×</button></div>' +
+      '<div class="preview-body"><img src="' + url + '" alt="第 ' + (index + 1) + ' 页曲谱完整内容"></div></div>';
+    document.body.appendChild(mask);
+    const close = () => mask.remove();
+    $('.preview-close', mask).onclick = close;
+    mask.addEventListener('click', e => { if (e.target === mask) close(); });
+  }
+
+  /* --- 工具按钮（预览 / 旋转 / 删除） --- */
   gridEl.addEventListener('click', async e => {
     const card = e.target.closest('.page-card');
     if (!card) return;
     const page = pages.find(p => p.id === card.dataset.id);
     if (!page) return;
-    if (e.target.closest('.tool-rotate')) {
+    if (e.target.closest('.preview-page')) {
+      openPagePreview(page, pages.indexOf(page));
+    } else if (e.target.closest('.tool-rotate')) {
       const btn = e.target.closest('.tool-rotate');
       btn.disabled = true;
       try {
