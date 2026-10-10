@@ -1,5 +1,5 @@
 /* =========================================================
-   SheetReader · 六线谱自动滚动阅读器
+   SheetReader · 滑动读谱器
    纯前端实现：IndexedDB 本地存储曲谱库，无需后端
    ---------------------------------------------------------
    结构：
@@ -616,14 +616,14 @@ async function renderPlayer(app, songId, token) {
   }
 
   /* BPM：优先使用用户设置值，否则使用自动查询到的原版 BPM；纯前端无开放音乐数据库时提供可靠回退值。 */
-  const fallbackBpm = 90;
+  const fallbackBpm = 70;
   let originalBpm = clamp(Number(song.originalBpm) || fallbackBpm, 30, 300);
   let playBpm = clamp(Number(song.playBpm) || originalBpm, 30, 300);
   let duration = song.durationSec > 0 ? song.durationSec * originalBpm / playBpm : pages.length * 64 * 60 / playBpm;
   let progress = 0;
   let playing = false;
   /* 底部倍速直接控制播放时间推进和曲谱滑动速度，并在歌曲间保留设置。 */
-  let speed = clamp(Number(localStorage.getItem('sr-playback-speed')) || 1, 0.25, 5);
+  let speed = clamp(Number(song.playbackSpeed) || 1, 0.25, 5);
   /* 桌面端当前视觉尺寸标记为 100%；内部宽度基准为容器的 80%。 */
   let zoom = 100;
   let rafId = 0;
@@ -728,8 +728,16 @@ async function renderPlayer(app, songId, token) {
   function applyScroll() {
     const vh = scroller.clientHeight;
     const maxY = Math.max(0, contentHeight() - vh);
-    /* 0 秒对应顶部，之后立即按完整可滚动距离推进，避免前段被 playhead 偏移量钳制而不动。 */
-    const y = progress >= duration ? maxY : clamp(progress / duration * maxY, 0, maxY);
+    /* 开场先把谱面第一行从顶部送到演奏提示横杠，之后才开始向下推进曲谱。 */
+    const leadIn = clamp(60 / playBpm * 4, 1.5, 5);
+    let y = 0;
+    if (progress < leadIn) {
+      y = -PH_RATIO * vh * (1 - progress / leadIn);
+    } else {
+      const bodyRatio = clamp((progress - leadIn) / Math.max(0.001, duration - leadIn), 0, 1);
+      y = bodyRatio * maxY;
+    }
+    if (progress >= duration) y = maxY;
     autoScrolling = true;
     scroller.scrollTop = y;
   }
@@ -758,13 +766,18 @@ async function renderPlayer(app, songId, token) {
     setPlayIcon();
   }
 
-  function setSpeed(next) {
+  let speedSaveTimer = 0;
+  function setSpeed(next, persist) {
     speed = clamp(Math.round(next * 100) / 100, 0.25, 5);
     $('#speed-val').value = speed.toFixed(2);
     $('#speed-range').value = String(speed);
     $('#speed-down').disabled = speed <= 0.25;
     $('#speed-up').disabled = speed >= 5;
-    try { localStorage.setItem('sr-playback-speed', String(speed)); } catch (_) {}
+    if (persist !== false) {
+      song.playbackSpeed = speed;
+      clearTimeout(speedSaveTimer);
+      speedSaveTimer = setTimeout(() => saveSong(song).catch(console.error), 180);
+    }
     /* 重置时间戳，避免调整瞬间把按钮操作耗时计入播放进度。 */
     lastTs = 0;
   }
@@ -1037,7 +1050,7 @@ async function renderPlayer(app, songId, token) {
   }
 
   setZoom(zoom);
-  setSpeed(speed);
+  setSpeed(speed, false);
   updateHud();
   setPlayIcon();
   applyScroll();
@@ -1048,6 +1061,7 @@ async function renderPlayer(app, songId, token) {
     cancelAnimationFrame(resizeRaf);
     cancelAnimationFrame(manualRaf);
     clearTimeout(controlsTimer);
+    clearTimeout(speedSaveTimer);
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', onResize);
     window.removeEventListener('orientationchange', onResize);

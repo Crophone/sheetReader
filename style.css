@@ -9,9 +9,9 @@
   --border: #2a303c;
   --text: #e9ecf1;
   --muted: #98a2b3;
-  --accent: #f0a63d;
-  --accent-press: #d9902c;
-  --accent-soft: rgba(240, 166, 61, .14);
+  --accent: #e86f9b;
+  --accent-press: #d85888;
+  --accent-soft: rgba(232, 111, 155, .16);
   --danger: #e5484d;
   --danger-soft: rgba(229, 72, 93, .12);
   --paper: #fdfcf8;
@@ -27,8 +27,8 @@
   --cover-icon: #39414f;
   --sbar-thumb: #333a47;
   --sbar-thumb-hover: #414a5a;
-  --ph-line: rgba(240, 166, 61, .9);         /* 播放指示线 */
-  --ph-glow: rgba(240, 166, 61, .5);
+  --ph-line: rgba(232, 111, 155, .92);       /* 播放指示线 */
+  --ph-glow: rgba(232, 111, 155, .5);
 }
 
 /* 亮色主题：覆盖同一组变量 */
@@ -39,9 +39,9 @@
   --border: #d9dee6;
   --text: #23272f;
   --muted: #69737f;
-  --accent: #c87d12;
-  --accent-press: #b06e0c;
-  --accent-soft: rgba(200, 125, 18, .12);
+  --accent: #c94f7d;
+  --accent-press: #b43c6b;
+  --accent-soft: rgba(201, 79, 125, .13);
   --danger: #d63a3f;
   --danger-soft: rgba(214, 58, 63, .09);
   --paper: #ffffff;
@@ -56,8 +56,8 @@
   --cover-icon: #b3bcc9;
   --sbar-thumb: #c4cad4;
   --sbar-thumb-hover: #aeb6c2;
-  --ph-line: rgba(197, 124, 15, .95);
-  --ph-glow: rgba(197, 124, 15, .35);
+  --ph-line: rgba(201, 79, 125, .95);
+  --ph-glow: rgba(201, 79, 125, .36);
 }
 
 * { box-sizing: border-box; }
@@ -185,7 +185,7 @@ img { -webkit-user-drag: none; }
 
 .btn.primary {
   background: var(--accent);
-  color: #201505;
+  color: #2b0d18;
   font-weight: 600;
 }
 .btn.primary:hover { background: var(--accent-press); }
@@ -460,7 +460,7 @@ img { -webkit-user-drag: none; }
   padding: 0 7px;
   border-radius: 16px;
   background: var(--accent);
-  color: #201505;
+  color: #2b0d18;
   font-weight: 800;
   font-size: 15px;
   display: flex;
@@ -513,7 +513,7 @@ img { -webkit-user-drag: none; }
   color: var(--text);
   backdrop-filter: blur(3px);
 }
-.tool:hover { background: var(--accent); color: #201505; }
+.tool:hover { background: var(--accent); color: #2b0d18; }
 .tool.del:hover { background: var(--danger); color: #fff; }
 
 /* ---------------- 播放器 ---------------- */
@@ -726,8 +726,8 @@ img { -webkit-user-drag: none; }
 }
 .progress-ctl { width: 100%; }
 .speed-ctl { width: 100%; }
-#speed-range { flex: 1; min-width: 0; accent-color: #22a559; }
-#speed-val:focus { border-color: #22a559; }
+#speed-range { flex: 1; min-width: 0; accent-color: var(--accent); }
+#speed-val:focus { border-color: var(--accent); }
 .time {
   font-size: 13px;
   color: var(--muted);
@@ -904,7 +904,7 @@ img { -webkit-user-drag: none; }
   #btn-play { flex: none; width: 42px; height: 42px; min-height: 42px; }
   .speed-ctl { flex: 1; width: auto; justify-content: center; gap: 8px; }
   .speed-ctl .icon-btn { display: none; }
-  #speed-range { flex: 1; min-width: 0; accent-color: #22a559; }
+  #speed-range { flex: 1; min-width: 0; accent-color: var(--accent); }
   #speed-val { width: 58px; }
   .time { display: none; }
   #toast-box { bottom: calc(112px + env(safe-area-inset-bottom)); }
