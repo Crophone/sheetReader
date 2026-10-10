@@ -1,0 +1,1044 @@
+/* =========================================================
+   SheetReader · 六线谱自动滚动阅读器
+   纯前端实现：IndexedDB 本地存储曲谱库，无需后端
+   ---------------------------------------------------------
+   结构：
+     1. 通用工具（图标 / toast / 对象URL池）
+     2. IndexedDB 数据层（songs / pages）
+     3. 图片工具（测量 / 旋转 / 合并导出）
+     4. 路由
+     5. 曲谱库视图
+     6. 管理视图（上传 / 拖拽排序）
+     7. 播放器视图（合并长谱 + 进度自动滚动）
+     8. 示例曲谱生成
+   ========================================================= */
+'use strict';
+
+/* ---------------- 通用工具 ---------------- */
+const $ = (sel, el) => (el || document).querySelector(sel);
+const $$ = (sel, el) => Array.from((el || document).querySelectorAll(sel));
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+/* 播放指示线固定在视口 35% 高度处，滚动映射与 CSS .playhead 的 top 保持一致 */
+const PH_RATIO = 0.35;
+
+function uid() {
+  return (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : 'id-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function fmtTime(sec) {
+  sec = Math.max(0, Math.round(sec));
+  return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+}
+
+const ICONS = {
+  play: '<path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/>',
+  pause: '<path d="M7.5 5h3.4v14H7.5zM13.1 5h3.4v14h-3.4z" fill="currentColor" stroke="none"/>',
+  rewind: '<path d="M6 5h2.2v14H6zM19.5 5.5v13L10 12z" fill="currentColor" stroke="none"/>',
+  back: '<path d="M15 5l-7 7 7 7"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  upload: '<path d="M12 16V4M6.5 9.5L12 4l5.5 5.5M4.5 20h15"/>',
+  download: '<path d="M12 4v12M6.5 10.5L12 16l5.5-5.5M4.5 20h15"/>',
+  trash: '<path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5"/>',
+  rotate: '<path d="M20 12a8 8 0 1 1-2.4-5.7M20 3.5V8h-4.5"/>',
+  music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2.2M12 19.8V22M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2 12h2.2M19.8 12H22M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/>',
+  moon: '<path d="M20.6 13.3A8.5 8.5 0 1 1 10.7 3.4a7 7 0 0 0 9.9 9.9z"/>',
+};
+
+function icon(name, size) {
+  size = size || 18;
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none"' +
+    ' stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    (ICONS[name] || '') + '</svg>';
+}
+
+function toast(msg, type) {
+  const box = $('#toast-box');
+  const el = document.createElement('div');
+  el.className = 'toast' + (type === 'error' ? ' error' : '');
+  el.textContent = msg;
+  box.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 300);
+  }, 2400);
+}
+
+/* 对象 URL 池：视图切换时统一回收，避免内存泄漏 */
+const URLPool = {
+  list: [],
+  make(blob) {
+    const u = URL.createObjectURL(blob);
+    this.list.push(u);
+    return u;
+  },
+  clear() {
+    this.list.forEach(u => URL.revokeObjectURL(u));
+    this.list = [];
+  },
+};
+
+/* ---------------- IndexedDB 数据层 ---------------- */
+const DB_NAME = 'sheetreader';
+const DB_VERSION = 1;
+let _dbPromise = null;
+
+function db() {
+  if (_dbPromise) return _dbPromise;
+  _dbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const d = req.result;
+      if (!d.objectStoreNames.contains('songs')) d.createObjectStore('songs', { keyPath: 'id' });
+      if (!d.objectStoreNames.contains('pages')) {
+        d.createObjectStore('pages', { keyPath: 'id' }).createIndex('songId', 'songId');
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  return _dbPromise;
+}
+
+function req2p(r) {
+  return new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+}
+
+async function dbGet(store, id) {
+  const d = await db();
+  return req2p(d.transaction(store).objectStore(store).get(id));
+}
+async function dbPut(store, val) {
+  const d = await db();
+  return req2p(d.transaction(store, 'readwrite').objectStore(store).put(val));
+}
+async function dbDelete(store, id) {
+  const d = await db();
+  return req2p(d.transaction(store, 'readwrite').objectStore(store).delete(id));
+}
+
+/* song: { id, name, artist, createdAt, updatedAt, durationSec } */
+/* page: { id, songId, order, name, type, blob, w, h } */
+
+async function listSongs() {
+  const d = await db();
+  const all = await req2p(d.transaction('songs').objectStore('songs').getAll());
+  return all.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+async function getSong(id) { return dbGet('songs', id); }
+async function saveSong(song) {
+  song.updatedAt = Date.now();
+  await dbPut('songs', song);
+  return song;
+}
+async function deleteSong(id) {
+  const pages = await listPages(id);
+  for (const p of pages) await dbDelete('pages', p.id);
+  await dbDelete('songs', id);
+}
+async function listPages(songId) {
+  const d = await db();
+  const idx = d.transaction('pages').objectStore('pages').index('songId');
+  const rows = await req2p(idx.getAll(songId));
+  return rows.sort((a, b) => a.order - b.order);
+}
+async function putPage(page) { return dbPut('pages', page); }
+async function removePage(id) { return dbDelete('pages', id); }
+
+/* ---------------- 图片工具 ---------------- */
+function blobToImage(blob) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = () => rej(new Error('图片解析失败'));
+    img.src = URL.createObjectURL(blob);
+  });
+}
+
+function imageMeta(blob) {
+  return blobToImage(blob).then(img => {
+    const m = { w: img.naturalWidth, h: img.naturalHeight };
+    URL.revokeObjectURL(img.src);
+    return m;
+  });
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise(res => canvas.toBlob(b => res(b), type, quality));
+}
+
+/* 顺时针旋转 90°：画布宽高互换后重绘 */
+async function rotatePageBlob(page) {
+  const img = await blobToImage(page.blob);
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const c = document.createElement('canvas');
+  c.width = H; c.height = W;
+  const ctx = c.getContext('2d');
+  ctx.translate(c.width / 2, c.height / 2);
+  ctx.rotate(Math.PI / 2);
+  ctx.drawImage(img, -W / 2, -H / 2);
+  URL.revokeObjectURL(img.src);
+  const type = page.type === 'image/png' ? 'image/png' : 'image/jpeg';
+  const blob = await canvasToBlob(c, type, 0.92);
+  page.blob = blob;
+  page.w = c.width;
+  page.h = c.height;
+  page.type = type;
+  await putPage(page);
+}
+
+/* 多页合并为一张长图并下载 */
+async function exportMergedPages(pages, songName) {
+  const imgs = [];
+  for (const p of pages) imgs.push(await blobToImage(p.blob));
+  const W0 = Math.max.apply(null, imgs.map(i => i.naturalWidth));
+  const rawH = imgs.reduce((s, i) => s + i.naturalHeight * W0 / i.naturalWidth, 0);
+  if (!(rawH > 0)) throw new Error('无法计算合并尺寸');
+  /* 浏览器画布单边上限约 16000px，超出则整体缩小 */
+  const scale = Math.min(1, 16000 / rawH);
+  const W = Math.round(W0 * scale);
+  const H = Math.round(rawH * scale);
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+  let y = 0;
+  for (const im of imgs) {
+    const h = im.naturalHeight * W / im.naturalWidth;
+    ctx.drawImage(im, 0, y, W, h);
+    y += h;
+    URL.revokeObjectURL(im.src);
+  }
+  const blob = await canvasToBlob(c, 'image/png');
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (songName || '曲谱') + '-合并长图.png';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+/* ---------------- 路由 ---------------- */
+let currentDestroy = null;
+let renderToken = 0;
+
+function navigate(hash) {
+  if (location.hash === hash) render();
+  else location.hash = hash;
+}
+
+async function render() {
+  const token = ++renderToken;
+  if (currentDestroy) { try { currentDestroy(); } catch (_) {} currentDestroy = null; }
+  URLPool.clear();
+
+  const app = $('#app');
+  const h = location.hash || '#/library';
+  const mSong = h.match(/^#\/song\/(.+)$/);
+  const mPlay = h.match(/^#\/play\/(.+)$/);
+  try {
+    if (mSong) await renderEditor(app, decodeURIComponent(mSong[1]), token);
+    else if (mPlay) await renderPlayer(app, decodeURIComponent(mPlay[1]), token);
+    else await renderLibrary(app, token);
+  } catch (err) {
+    console.error(err);
+    showStorageError(app, err);
+  }
+}
+
+function showStorageError(app, err) {
+  console.error(err);
+  app.innerHTML =
+    '<div class="view"><div class="error-panel">' +
+    '<b>⚠️ 无法访问本地数据库（IndexedDB）</b>' +
+    '<p>当前浏览器的存储不可用。请改用本地 HTTP 服务打开本应用：</p>' +
+    '<p>在项目目录运行 <code>python -m http.server 8000</code>，' +
+    '然后访问 <code>http://localhost:8000</code>。</p>' +
+    '</div></div>';
+}
+
+/* ---------------- 曲谱库视图 ---------------- */
+async function renderLibrary(app, token) {
+  const songs = await listSongs();
+  if (token !== renderToken) return;
+
+  app.innerHTML =
+    '<div class="view library-view">' +
+      '<div class="lib-head">' +
+        '<div><h2>我的曲谱库</h2>' +
+        '<p class="muted">上传多张六线谱自动合并 · 演奏时曲谱随进度自动滚动，解放双手</p></div>' +
+        '<div class="lib-actions">' +
+          '<button class="btn ghost" id="btn-demo">' + icon('music') + ' 载入示例曲谱</button>' +
+          '<button class="btn primary" id="btn-new">' + icon('plus') + ' 新建曲谱</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="songs-grid" id="songs-grid"></div>' +
+      '<div class="empty" id="empty-state" style="display:none">' + icon('music', 42) +
+        '<p>曲谱库还是空的</p>' +
+        '<span>点击「新建曲谱」上传你喜欢的歌曲六线谱图片，或先载入示例曲谱体验自动滚动演奏</span>' +
+      '</div>' +
+    '</div>';
+
+  const gridEl = $('#songs-grid');
+  if (!songs.length) {
+    gridEl.style.display = 'none';
+    $('#empty-state').style.display = '';
+  } else {
+    songs.forEach(s => {
+      gridEl.insertAdjacentHTML('beforeend',
+        '<div class="song-card" data-id="' + esc(s.id) + '">' +
+          '<div class="cover">' + icon('music', 44) + '<img alt="曲谱封面"></div>' +
+          '<div class="song-info"><b class="song-name">' + esc(s.name) + '</b>' +
+          '<span class="muted">' + esc(s.artist || '未知歌手') + ' · <span class="page-n">…</span> 页</span></div>' +
+          '<div class="song-actions">' +
+            '<button class="btn primary sm act-play">' + icon('play', 15) + ' 演奏</button>' +
+            '<button class="btn ghost sm act-edit">管理</button>' +
+            '<button class="btn danger sm act-del" title="删除曲谱">' + icon('trash', 14) + '</button>' +
+          '</div>' +
+        '</div>');
+      bindSongCard(gridEl.lastElementChild, s, token);
+    });
+  }
+
+  $('#btn-new').onclick = () => openNewSongModal(async (name, artist) => {
+    const song = await saveSong({
+      id: uid(), name, artist, createdAt: Date.now(), durationSec: 0,
+    });
+    navigate('#/song/' + song.id);
+  });
+
+  $('#btn-demo').onclick = async () => {
+    const btn = $('#btn-demo');
+    btn.disabled = true;
+    try {
+      const s = await createDemoSong();
+      if (token !== renderToken) return;
+      toast('示例曲谱已加入曲谱库');
+      navigate('#/song/' + s.id);
+    } catch (err) {
+      console.error(err);
+      toast('示例曲谱生成失败', 'error');
+      btn.disabled = false;
+    }
+  };
+}
+
+function bindSongCard(card, song, token) {
+  /* 异步填充封面与页数 */
+  listPages(song.id).then(ps => {
+    if (token !== renderToken || !card.isConnected) return;
+    const n = $('.page-n', card);
+    if (n) n.textContent = ps.length;
+    if (ps.length) {
+      const img = $('img', card);
+      img.src = URLPool.make(ps[0].blob);
+      img.alt = song.name;
+    } else {
+      $('img', card).remove();
+    }
+  }).catch(() => {});
+
+  $('.act-play', card).onclick = () => navigate('#/play/' + song.id);
+  $('.act-edit', card).onclick = () => navigate('#/song/' + song.id);
+  $('.act-del', card).onclick = async () => {
+    if (!confirm('确定删除曲谱「' + song.name + '」？该操作不可恢复。')) return;
+    await deleteSong(song.id);
+    if (token !== renderToken) return;
+    toast('已删除「' + song.name + '」');
+    render();
+  };
+}
+
+function openNewSongModal(onOk) {
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask';
+  mask.innerHTML =
+    '<div class="modal"><h3>新建曲谱</h3>' +
+    '<label class="field">歌曲名称<input id="m-name" placeholder="例如：晴天（间奏 SOLO）" maxlength="80"></label>' +
+    '<label class="field">歌手 / 来源（可选）<input id="m-artist" placeholder="例如：周杰伦 / Guitar Pro 导出图" maxlength="80"></label>' +
+    '<div class="modal-actions"><button class="btn ghost" id="m-cancel">取消</button>' +
+    '<button class="btn primary" id="m-ok">创建并上传谱图</button></div></div>';
+  document.body.appendChild(mask);
+
+  const close = () => mask.remove();
+  let busy = false;
+  const ok = async () => {
+    if (busy) return;
+    const name = $('#m-name', mask).value.trim();
+    if (!name) { toast('请先填写歌曲名称'); $('#m-name', mask).focus(); return; }
+    busy = true;
+    const artist = $('#m-artist', mask).value.trim();
+    close();
+    await onOk(name, artist);
+  };
+  $('#m-cancel', mask).onclick = close;
+  $('#m-ok', mask).onclick = ok;
+  mask.addEventListener('click', e => { if (e.target === mask) close(); });
+  mask.addEventListener('keydown', e => {
+    if (e.key === 'Enter') ok();
+    else if (e.key === 'Escape') close();
+  });
+  setTimeout(() => $('#m-name', mask).focus(), 60);
+}
+
+/* ---------------- 管理视图（上传 / 拖拽排序） ---------------- */
+async function renderEditor(app, songId, token) {
+  const song = await getSong(songId);
+  if (token !== renderToken) return;
+  if (!song) { toast('未找到该曲谱'); return navigate('#/library'); }
+  let pages = await listPages(songId);
+  if (token !== renderToken) return;
+
+  app.innerHTML =
+    '<div class="view editor-view">' +
+      '<div class="page-head">' +
+        '<div class="ph-left">' +
+          '<button class="btn icon-btn" id="btn-back-lib" title="返回曲谱库">' + icon('back') + '</button>' +
+          '<div class="head-inputs">' +
+            '<input id="song-name" class="song-input name" value="' + esc(song.name) + '" placeholder="歌曲名称" maxlength="80">' +
+            '<input id="song-artist" class="song-input artist" value="' + esc(song.artist || '') + '" placeholder="歌手 / 来源（可选）" maxlength="80">' +
+          '</div>' +
+        '</div>' +
+        '<div class="ph-actions">' +
+          '<span class="muted">共 <b id="page-count">0</b> 页</span>' +
+          '<button class="btn ghost" id="btn-export">' + icon('download') + ' 导出合并长图</button>' +
+          '<button class="btn primary" id="btn-play-song">' + icon('play') + ' 开始演奏</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="upload-zone" id="upload-zone">' + icon('upload', 26) +
+        '<p>点击选择谱图，或将图片拖拽到此处（支持一次多选）</p>' +
+        '<span class="uz-tip">上传后可拖拽缩略图调整页序，编号 1、2、3… 会自动实时更新</span>' +
+        '<input type="file" id="file-input" accept="image/*" multiple hidden>' +
+      '</div>' +
+      '<div class="pages-scroll">' +
+        '<div class="pages-grid" id="pages-grid"></div>' +
+        '<div class="empty small" id="empty-pages" style="display:none">还没有谱页，先上传几张六线谱图片吧</div>' +
+      '</div>' +
+    '</div>';
+
+  const gridEl = $('#pages-grid');
+  const zone = $('#upload-zone');
+  const fileInput = $('#file-input');
+
+  function cardHTML(page, i) {
+    return '<div class="page-card" draggable="true" data-id="' + esc(page.id) + '" title="拖拽调整顺序">' +
+      '<div class="badge">' + (i + 1) + '</div>' +
+      '<div class="thumb"><img src="' + URLPool.make(page.blob) + '" alt="第' + (i + 1) + '页" draggable="false"></div>' +
+      '<div class="card-tools">' +
+        '<button class="tool tool-rotate" title="顺时针旋转 90°">' + icon('rotate', 15) + '</button>' +
+        '<button class="tool tool-del" title="删除本页">' + icon('trash', 15) + '</button>' +
+      '</div></div>';
+  }
+
+  function refreshGrid() {
+    gridEl.innerHTML = pages.map(cardHTML).join('');
+    $('#page-count').textContent = pages.length;
+    $('#empty-pages').style.display = pages.length ? 'none' : '';
+  }
+
+  function renumber() {
+    $$('.page-card', gridEl).forEach((c, i) => { $('.badge', c).textContent = i + 1; });
+  }
+
+  /* 按 DOM 顺序回写页序 */
+  async function persistOrder() {
+    const ids = $$('.page-card', gridEl).map(c => c.dataset.id);
+    pages.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+    let i = 0;
+    for (const p of pages) {
+      if (p.order !== i) { p.order = i; await putPage(p); }
+      i++;
+    }
+    await saveSong(song);
+  }
+
+  async function addFiles(fileList) {
+    const files = Array.from(fileList).filter(f => f.type && f.type.startsWith('image/'));
+    if (!files.length) { toast('请选择图片文件（PNG / JPG 等）'); return; }
+    let order = pages.length ? Math.max.apply(null, pages.map(p => p.order)) + 1 : 0;
+    let ok = 0;
+    for (const f of files) {
+      try {
+        const meta = await imageMeta(f);
+        await putPage({
+          id: uid(), songId: song.id, order: order++,
+          name: f.name, type: f.type, blob: f, w: meta.w, h: meta.h,
+        });
+        ok++;
+      } catch (err) {
+        console.error(err);
+        toast('导入失败：' + f.name, 'error');
+      }
+    }
+    if (!ok) return;
+    pages = await listPages(songId);
+    if (token !== renderToken) return;
+    await saveSong(song);
+    refreshGrid();
+    toast('已添加 ' + ok + ' 页，拖拽缩略图可调整顺序');
+  }
+
+  /* --- 上传交互 --- */
+  /* input 是 zone 的子元素，input.click() 的冒泡需要拦下，避免递归触发文件框 */
+  zone.addEventListener('click', e => {
+    if (e.target === fileInput) return;
+    fileInput.click();
+  });
+  fileInput.addEventListener('change', () => { addFiles(fileInput.files); fileInput.value = ''; });
+  ['dragenter', 'dragover'].forEach(ev =>
+    zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('over'); }));
+  ['dragleave', 'drop'].forEach(ev =>
+    zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('over'); }));
+  zone.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+
+  /* --- 缩略图拖拽排序（拖拽过程中编号实时更新） --- */
+  let dragEl = null;
+  gridEl.addEventListener('dragstart', e => {
+    const card = e.target.closest('.page-card');
+    if (!card) return;
+    dragEl = card;
+    card.classList.add('dragging');
+    gridEl.classList.add('dnd-active');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', card.dataset.id); } catch (_) {}
+  });
+  gridEl.addEventListener('dragover', e => {
+    if (!dragEl) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const target = e.target.closest('.page-card');
+    if (!target || target === dragEl) {
+      if (!target && gridEl.lastElementChild !== dragEl) gridEl.appendChild(dragEl);
+    } else {
+      const r = target.getBoundingClientRect();
+      const before = (e.clientY - r.top) < r.height / 2;
+      const ref = before ? target : target.nextSibling;
+      if (ref !== dragEl) gridEl.insertBefore(dragEl, ref);
+    }
+    renumber();
+  });
+  gridEl.addEventListener('drop', e => e.preventDefault());
+  gridEl.addEventListener('dragend', async () => {
+    if (!dragEl) return;
+    dragEl.classList.remove('dragging');
+    gridEl.classList.remove('dnd-active');
+    dragEl = null;
+    renumber();
+    await persistOrder();
+    toast('页序已保存');
+  });
+
+  /* --- 工具按钮（旋转 / 删除） --- */
+  gridEl.addEventListener('click', async e => {
+    const card = e.target.closest('.page-card');
+    if (!card) return;
+    const page = pages.find(p => p.id === card.dataset.id);
+    if (!page) return;
+    if (e.target.closest('.tool-rotate')) {
+      const btn = e.target.closest('.tool-rotate');
+      btn.disabled = true;
+      try {
+        await rotatePageBlob(page);
+        const img = $('.thumb img', card);
+        if (img) img.src = URLPool.make(page.blob);
+      } catch (err) {
+        console.error(err);
+        toast('旋转失败', 'error');
+      }
+      btn.disabled = false;
+    } else if (e.target.closest('.tool-del')) {
+      const idx = $$('.page-card', gridEl).indexOf(card);
+      if (!confirm('确定删除第 ' + (idx + 1) + ' 页吗？')) return;
+      await removePage(page.id);
+      pages = await listPages(songId);
+      let i = 0;
+      for (const p of pages) { if (p.order !== i) { p.order = i; await putPage(p); } i++; }
+      await saveSong(song);
+      if (token !== renderToken) return;
+      refreshGrid();
+      toast('已删除第 ' + (idx + 1) + ' 页');
+    }
+  });
+
+  /* --- 顶部操作 --- */
+  $('#btn-back-lib').onclick = () => navigate('#/library');
+  $('#btn-play-song').onclick = () => navigate('#/play/' + song.id);
+  $('#btn-export').onclick = async () => {
+    if (!pages.length) { toast('还没有谱页可导出'); return; }
+    toast('正在生成合并长图，请稍候…');
+    try {
+      await exportMergedPages(pages, song.name);
+      toast('已导出合并长图（浏览器下载中）');
+    } catch (err) {
+      console.error(err);
+      toast('导出失败：' + err.message, 'error');
+    }
+  };
+  $('#song-name').addEventListener('change', async e => {
+    song.name = e.target.value.trim() || '未命名曲谱';
+    e.target.value = song.name;
+    await saveSong(song);
+  });
+  $('#song-artist').addEventListener('change', async e => {
+    song.artist = e.target.value.trim();
+    await saveSong(song);
+  });
+
+  refreshGrid();
+}
+
+/* ---------------- 播放器视图 ---------------- */
+async function renderPlayer(app, songId, token) {
+  const song = await getSong(songId);
+  if (token !== renderToken) return;
+  if (!song) { toast('未找到该曲谱'); return navigate('#/library'); }
+  const pages = await listPages(songId);
+  if (token !== renderToken) return;
+
+  if (!pages.length) {
+    app.innerHTML =
+      '<div class="view"><div class="empty">' + icon('music', 42) +
+      '<p>这首歌还没有谱页</p><span>先到管理页上传六线谱图片，再回来演奏</span>' +
+      '<button class="btn primary" id="btn-go-manage" style="margin-top:10px">去上传谱图</button></div></div>';
+    $('#btn-go-manage').onclick = () => navigate('#/song/' + songId);
+    return;
+  }
+
+  /* BPM：优先使用用户设置值，否则使用自动查询到的原版 BPM；纯前端无开放音乐数据库时提供可靠回退值。 */
+  const fallbackBpm = 90;
+  let originalBpm = clamp(Number(song.originalBpm) || fallbackBpm, 30, 300);
+  let playBpm = clamp(Number(song.playBpm) || originalBpm, 30, 300);
+  let duration = song.durationSec > 0 ? song.durationSec * originalBpm / playBpm : pages.length * 64 * 60 / playBpm;
+  let progress = 0;
+  let playing = false;
+  let speed = 1;
+  /* 显示缩放以当前视觉尺寸为 100%；内部实际宽度基准为容器的 50%。 */
+  let zoom = 1;
+  let rafId = 0;
+  let lastTs = 0;
+  let autoScrolling = false;
+
+  app.innerHTML =
+    '<div class="view player-view">' +
+      '<div class="player-top">' +
+        '<button class="btn icon-btn" id="btn-back" title="返回管理页">' + icon('back') + '</button>' +
+        '<div class="pt-title"><b>' + esc(song.name) + '</b>' +
+        '<span>' + esc(song.artist || '未知歌手') + ' · ' + pages.length + ' 页 · 已合并为连续长谱</span></div>' +
+        '<div class="pt-controls">' +
+          '<div class="bpm-controls">' +
+            '<label>原版 BPM <input id="original-bpm" type="number" min="30" max="300" step="1"></label>' +
+            '<span class="bpm-status" id="bpm-status">自动查询</span>' +
+            '<button class="btn ghost sm" id="search-bpm">重新查询</button>' +
+            '<label>播放 BPM <input id="play-bpm" type="number" min="30" max="300" step="1"></label>' +
+            '<button class="btn ghost sm" id="reset-bpm">使用原版</button>' +
+          '</div>' +
+          '<div class="zoom-ctl">' +
+            '<button id="zoom-out" class="btn icon-btn" title="缩小">−</button>' +
+            '<span id="zoom-val">100%</span>' +
+            '<button id="zoom-in" class="btn icon-btn" title="放大">＋</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="stage">' +
+        '<div class="scroller" id="scroller"><div class="sheet" id="sheet"></div></div>' +
+        '<div class="measure-highlight" aria-hidden="true"><span>正在演奏</span></div>' +
+        '<div class="playhead" aria-hidden="true"></div>' +
+      '</div>' +
+      '<div class="player-bar">' +
+        '<button class="btn icon-btn" id="btn-begin" title="回到开头">' + icon('rewind') + '</button>' +
+        '<button class="btn primary round" id="btn-play" title="播放（空格）">' + icon('play', 22) + '</button>' +
+        '<span class="time" id="time-cur">0:00</span>' +
+        '<input type="range" id="seek" min="0" max="1000" value="0" step="1" title="演奏进度">' +
+        '<span class="time" id="time-total">0:00</span>' +
+        '<div class="speed-ctl">' +
+          '<button id="speed-down" class="btn icon-btn" title="滚动减速（-）">−</button>' +
+          '<span id="speed-val">1.00×</span>' +
+          '<button id="speed-up" class="btn icon-btn" title="滚动加速（+）">＋</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="player-hint">空格：播放 / 暂停 · ← →：快退 / 快进 5 秒 · + −：滚动速度 · 点击谱面任意位置跳转 · 滚轮手动定位后自动从该处续播</div>' +
+    '</div>';
+
+  const scroller = $('#scroller');
+  const sheet = $('#sheet');
+  const btnPlay = $('#btn-play');
+  const seek = $('#seek');
+
+  /* 拼接谱页：多页图片纵向无缝合并 + 末尾留白（让最后一行能升到指示线处） */
+  const imgEls = pages.map(p => {
+    const im = new Image();
+    im.src = URLPool.make(p.blob);
+    im.alt = '谱页';
+    sheet.appendChild(im);
+    return im;
+  });
+  const tail = document.createElement('div');
+  tail.className = 'tail';
+  sheet.appendChild(tail);
+  await Promise.all(imgEls.map(im => (im.decode ? im.decode().catch(() => {}) : Promise.resolve())));
+  if (token !== renderToken) return;
+
+  function fitTail() {
+    tail.style.height = Math.round(scroller.clientHeight * (1 - PH_RATIO)) + 'px';
+  }
+
+  function contentHeight() {
+    return imgEls.reduce((sum, im) => sum + im.offsetHeight, 0);
+  }
+
+  /* 按页识别头尾留白：留白只占 8% 时间，曲谱主体获得 92% 时间，跨页时快速平滑掠过空白。 */
+  function timeToSheetY(ratio) {
+    const heights = imgEls.map(im => im.offsetHeight);
+    const content = heights.reduce((a, b) => a + b, 0);
+    if (!content) return 0;
+    const units = heights.map(h => ({ fast: h * 0.18, slow: h * 0.82 }));
+    const totalWeight = units.reduce((s, u) => s + u.fast * 0.08 + u.slow * 0.92, 0);
+    let target = clamp(ratio, 0, 1) * totalWeight;
+    let y = 0;
+    for (const u of units) {
+      const slowWeight = u.slow * 0.92;
+      const fastWeight = u.fast * 0.08;
+      if (target <= slowWeight) return y + target / 0.92;
+      target -= slowWeight;
+      y += u.slow;
+      if (target <= fastWeight) return y + target / 0.08;
+      target -= fastWeight;
+      y += u.fast;
+    }
+    return content;
+  }
+
+  function sheetYToTime(y) {
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 22; i++) {
+      const mid = (lo + hi) / 2;
+      if (timeToSheetY(mid) < y) lo = mid; else hi = mid;
+    }
+    return (lo + hi) / 2;
+  }
+
+  function applyScroll() {
+    const vh = scroller.clientHeight;
+    const y = clamp(timeToSheetY(progress / duration) - PH_RATIO * vh, 0, Math.max(0, sheet.offsetHeight - vh));
+    autoScrolling = true;
+    scroller.scrollTop = y;
+  }
+
+  function updateHud() {
+    $('#time-cur').textContent = fmtTime(progress);
+    $('#time-total').textContent = fmtTime(duration);
+    seek.value = duration ? Math.round(progress / duration * 1000) : 0;
+  }
+
+  function setProgress(p, scroll) {
+    progress = clamp(p, 0, duration);
+    updateHud();
+    if (scroll !== false) applyScroll();
+  }
+
+  function setPlayIcon() {
+    btnPlay.innerHTML = playing ? icon('pause', 22) : icon('play', 22);
+    btnPlay.title = playing ? '暂停（空格）' : '播放（空格）';
+  }
+
+  function togglePlay() {
+    if (!playing && progress >= duration) progress = 0;
+    playing = !playing;
+    lastTs = 0;
+    setPlayIcon();
+  }
+
+  function bumpSpeed(d) {
+    speed = clamp(Math.round((speed + d) * 100) / 100, 0.25, 3);
+    $('#speed-val').textContent = speed.toFixed(2) + '×';
+  }
+
+  function setZoom(z) {
+    zoom = clamp(z, 0.1, 6);
+    sheet.style.width = zoom * 50 + '%';
+    $('#zoom-val').textContent = Math.round(zoom * 100) + '%';
+    $('#zoom-out').disabled = zoom <= 0.1;
+    requestAnimationFrame(applyScroll);
+  }
+
+  /* --- 控件绑定 --- */
+  btnPlay.onclick = togglePlay;
+  $('#btn-begin').onclick = () => setProgress(0);
+  $('#btn-back').onclick = () => navigate('#/song/' + songId);
+  $('#speed-up').onclick = () => bumpSpeed(0.05);
+  $('#speed-down').onclick = () => bumpSpeed(-0.05);
+  $('#zoom-in').onclick = () => setZoom(zoom * 1.25);
+  $('#zoom-out').onclick = () => setZoom(zoom / 1.25);
+  seek.addEventListener('input', e => setProgress(e.target.value / 1000 * duration));
+
+  /* BPM 设置：原版值可由查询服务回填，也允许校正；播放 BPM 持久保存并实时改变滚动时长。 */
+  const originalBpmEl = $('#original-bpm');
+  const playBpmEl = $('#play-bpm');
+  const bpmStatusEl = $('#bpm-status');
+  const searchBpmBtn = $('#search-bpm');
+  originalBpmEl.value = originalBpm;
+  playBpmEl.value = playBpm;
+  bpmStatusEl.textContent = song.originalBpm ? '已写入' : '准备查询';
+
+  function getBpmApiConfig() {
+    /* 部署方可在 index.html 的 app.js 之前设置 window.SHEETREADER_BPM_API。
+       endpoint 支持 {title}/{artist} 占位符；responsePath 默认为 bpm。 */
+    const cfg = window.SHEETREADER_BPM_API || {};
+    return {
+      endpoint: cfg.endpoint || '',
+      apiKey: cfg.apiKey || '',
+      headerName: cfg.headerName || 'X-Api-Key',
+      responsePath: cfg.responsePath || 'bpm',
+    };
+  }
+
+  function readPath(obj, path) {
+    return String(path).split('.').reduce((v, key) => v == null ? undefined : v[key], obj);
+  }
+
+  async function searchOriginalBpm(force) {
+    if (song.originalBpm && !force) return;
+    const cfg = getBpmApiConfig();
+    if (!cfg.endpoint) {
+      bpmStatusEl.textContent = '未配置查询服务';
+      return;
+    }
+    searchBpmBtn.disabled = true;
+    bpmStatusEl.textContent = '正在按歌名搜索…';
+    try {
+      const url = cfg.endpoint
+        .replaceAll('{title}', encodeURIComponent(song.name))
+        .replaceAll('{artist}', encodeURIComponent(song.artist || ''));
+      const headers = { Accept: 'application/json' };
+      if (cfg.apiKey) headers[cfg.headerName] = cfg.apiKey;
+      const res = await fetch(url, { headers });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const found = Math.round(Number(readPath(data, cfg.responsePath)));
+      if (!(found >= 30 && found <= 300)) throw new Error('未找到有效 BPM');
+      const wasDefaultPlayBpm = !song.playBpm || playBpm === originalBpm;
+      originalBpm = found;
+      song.originalBpm = found;
+      song.bpmSource = url.replace(/([?&](?:key|api_key|token)=)[^&]+/gi, '$1***');
+      originalBpmEl.value = found;
+      if (wasDefaultPlayBpm) {
+        playBpm = found;
+        song.playBpm = found;
+        playBpmEl.value = found;
+      }
+      await saveSong(song);
+      await saveBpm(false);
+      bpmStatusEl.textContent = '自动查询并写入';
+      toast('已找到原曲速度：' + found + ' BPM');
+    } catch (err) {
+      console.error(err);
+      bpmStatusEl.textContent = '未找到，可手动填写';
+      toast('未查到原曲 BPM：' + err.message, 'error');
+    } finally {
+      searchBpmBtn.disabled = false;
+    }
+  }
+
+  async function saveBpm(showToast) {
+    const oldDuration = duration;
+    originalBpm = clamp(Number(originalBpmEl.value) || fallbackBpm, 30, 300);
+    playBpm = clamp(Number(playBpmEl.value) || originalBpm, 30, 300);
+    originalBpmEl.value = originalBpm;
+    playBpmEl.value = playBpm;
+    song.originalBpm = originalBpm;
+    song.playBpm = playBpm;
+    const baseDuration = song.durationSec > 0 ? song.durationSec : pages.length * 64 * 60 / originalBpm;
+    duration = baseDuration * originalBpm / playBpm;
+    progress = oldDuration ? progress / oldDuration * duration : 0;
+    await saveSong(song);
+    updateHud();
+    applyScroll();
+    if (showToast !== false) toast('播放速度已设为 ' + playBpm + ' BPM');
+  }
+  originalBpmEl.addEventListener('change', () => saveBpm());
+  playBpmEl.addEventListener('change', () => saveBpm());
+  searchBpmBtn.onclick = () => searchOriginalBpm(true);
+  $('#reset-bpm').onclick = () => { playBpmEl.value = originalBpmEl.value; saveBpm(); };
+  searchOriginalBpm(false);
+
+  /* 用户手动滚动（滚轮 / 拖动滚动条）：同步进度，播放中从新位置继续 */
+  scroller.addEventListener('scroll', () => {
+    if (autoScrolling) { autoScrolling = false; return; }
+    const H = contentHeight();
+    const vh = scroller.clientHeight;
+    if (H <= 0 || vh <= 0) return;
+    progress = sheetYToTime(scroller.scrollTop + PH_RATIO * vh) * duration;
+    updateHud();
+  }, { passive: true });
+
+  /* 点击谱面任意位置：跳转到对应进度 */
+  scroller.addEventListener('click', e => {
+    const r = sheet.getBoundingClientRect();
+    if (r.height <= 0) return;
+    setProgress(sheetYToTime(clamp(e.clientY - r.top, 0, contentHeight())) * duration);
+  });
+
+  /* 键盘快捷键 */
+  function onKey(e) {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); setProgress(progress + 5); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); setProgress(progress - 5); }
+    else if (e.key === '+' || e.key === '=') bumpSpeed(0.05);
+    else if (e.key === '-') bumpSpeed(-0.05);
+  }
+  document.addEventListener('keydown', onKey);
+
+  let resizeRaf = 0;
+  function onResize() {
+    cancelAnimationFrame(resizeRaf);
+    resizeRaf = requestAnimationFrame(() => { fitTail(); applyScroll(); });
+  }
+  window.addEventListener('resize', onResize);
+  window.addEventListener('orientationchange', onResize);
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
+
+  /* --- 主循环：进度驱动滚动 --- */
+  function loop(ts) {
+    if (playing) {
+      if (!lastTs) lastTs = ts;
+      const dt = (ts - lastTs) / 1000;
+      progress = Math.min(duration, progress + dt * speed);
+      applyScroll();
+      updateHud();
+      if (progress >= duration) {
+        playing = false;
+        setPlayIcon();
+        toast('演奏结束，按空格或播放键可从头再来一遍');
+      }
+    }
+    lastTs = ts;
+    rafId = requestAnimationFrame(loop);
+  }
+
+  fitTail();
+  setZoom(zoom);
+  updateHud();
+  setPlayIcon();
+  applyScroll();
+  rafId = requestAnimationFrame(loop);
+
+  currentDestroy = () => {
+    cancelAnimationFrame(rafId);
+    cancelAnimationFrame(resizeRaf);
+    document.removeEventListener('keydown', onKey);
+    window.removeEventListener('resize', onResize);
+    window.removeEventListener('orientationchange', onResize);
+    if (window.visualViewport) window.visualViewport.removeEventListener('resize', onResize);
+  };
+}
+
+/* ---------------- 示例曲谱生成 ---------------- */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* 用 Canvas 画一页仿真六线谱，便于零素材体验完整流程 */
+function drawDemoPage(idx, total) {
+  const W = 900, H = 1273;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const x = c.getContext('2d');
+
+  x.fillStyle = '#fdfcf7';
+  x.fillRect(0, 0, W, H);
+
+  x.fillStyle = '#1c2333';
+  x.textAlign = 'center';
+  x.font = 'bold 40px Georgia, "Microsoft YaHei", sans-serif';
+  x.fillText('C 大调音阶练习', W / 2, 92);
+  x.font = '15px "Microsoft YaHei", sans-serif';
+  x.fillStyle = '#8a8f9c';
+  x.fillText('SheetReader 示例曲谱 · 第 ' + (idx + 1) + ' / ' + total + ' 页', W / 2, 122);
+  if (idx === 0) x.fillText('♩ = 90', W / 2, 152);
+
+  const lineGap = 15;
+  const staffH = lineGap * 5;
+  const sysGap = 56;
+  const left = 70, right = W - 70;
+  const top = idx === 0 ? 205 : 160;
+  const rng = mulberry32(idx * 9973 + 7);
+
+  for (let s = 0; ; s++) {
+    const y0 = top + s * (staffH + sysGap);
+    if (y0 + staffH > H - 70) break;
+    x.strokeStyle = '#3a4256';
+    for (let l = 0; l < 6; l++) {
+      x.lineWidth = 1;
+      x.beginPath();
+      x.moveTo(left, y0 + l * lineGap);
+      x.lineTo(right, y0 + l * lineGap);
+      x.stroke();
+    }
+    /* 小节线（首尾加粗） */
+    const bars = 4;
+    for (let b = 0; b <= bars; b++) {
+      const bx = left + (right - left) * b / bars;
+      x.lineWidth = (b === 0 || b === bars) ? 2.5 : 1;
+      x.beginPath();
+      x.moveTo(bx, y0);
+      x.lineTo(bx, y0 + staffH);
+      x.stroke();
+    }
+    /* 品位数字 */
+    x.fillStyle = '#c0392b';
+    x.font = 'bold 13px Consolas, monospace';
+    x.textAlign = 'center';
+    for (let b = 0; b < bars; b++) {
+      for (let n = 0; n < 8; n++) {
+        if (rng() < 0.28) continue;
+        const px = left + (right - left) * (b + n / 8 + 0.5 / 8) / bars;
+        const line = Math.floor(rng() * 6);
+        x.fillText(String(Math.floor(rng() * 15)), px, y0 + line * lineGap + 5);
+      }
+    }
+  }
+  return canvasToBlob(c, 'image/png');
+}
+
+async function createDemoSong() {
+  const song = await saveSong({
+    id: uid(),
+    name: '示例 · C 大调音阶练习',
+    artist: 'SheetReader 生成',
+    createdAt: Date.now(),
+    durationSec: 0,
+  });
+  const TOTAL = 3;
+  for (let i = 0; i < TOTAL; i++) {
+    const blob = await drawDemoPage(i, TOTAL);
+    await putPage({
+      id: uid(), songId: song.id, order: i,
+      name: 'demo-' + (i + 1) + '.png', type: 'image/png',
+      blob, w: 900, h: 1273,
+    });
+  }
+  return song;
+}
+
+/* ---------------- 启动 ---------------- */
+$('#brand').addEventListener('click', () => navigate('#/library'));
+window.addEventListener('hashchange', render);
+render();

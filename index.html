@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<title>SheetReader · 六线谱自动滚动阅读器</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%B8%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script>
+/* 首屏前确定主题：已保存的选择 > 系统偏好，避免主题闪烁 */
+(function () {
+  var t = null;
+  try { t = localStorage.getItem('sr-theme'); } catch (e) {}
+  if (t !== 'light' && t !== 'dark') {
+    t = window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+  document.documentElement.dataset.theme = t;
+})();
+</script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand" id="brand" title="回到曲谱库">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+    <span class="brand-name">SheetReader</span>
+    <span class="brand-sub">六线谱自动滚动阅读器</span>
+  </div>
+  <button class="btn icon-btn" id="theme-toggle" title="切换亮色 / 暗色主题"></button>
+</header>
+<main id="app"></main>
+<div id="toast-box" aria-live="polite"></div>
+<script>
+/* 可选：配置支持按歌名和歌手查询 BPM 的服务。不要把生产密钥提交到公开仓库。
+window.SHEETREADER_BPM_API = {
+  endpoint: 'https://api.example.com/lookup?track={title}&artist={artist}',
+  apiKey: '',
+  headerName: 'X-Api-Key',
+  responsePath: 'bpm'
+};
+*/
+</script>
+<script src="app.js"></script>
+</body>
+</html>
