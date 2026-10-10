@@ -633,7 +633,7 @@ async function renderPlayer(app, songId, token) {
   app.innerHTML =
     '<div class="view player-view">' +
       '<div class="player-top">' +
-        '<button class="btn icon-btn" id="btn-back" title="返回管理页">' + icon('back') + '</button>' +
+        '<button class="btn icon-btn" id="btn-back" title="返回曲谱库">' + icon('back') + '</button>' +
         '<div class="pt-title"><b>' + esc(song.name) + '</b>' +
         '<span>' + esc(song.artist || '未知歌手') + ' · ' + pages.length + ' 页 · 已合并为连续长谱</span></div>' +
         '<div class="pt-controls">' +
@@ -784,7 +784,7 @@ async function renderPlayer(app, songId, token) {
   /* --- 控件绑定 --- */
   btnPlay.onclick = togglePlay;
   $('#btn-begin').onclick = () => setProgress(0);
-  $('#btn-back').onclick = () => navigate('#/song/' + songId);
+  $('#btn-back').onclick = () => navigate('#/library');
   $('#speed-up').onclick = () => bumpSpeed(0.05);
   $('#speed-down').onclick = () => bumpSpeed(-0.05);
   const speedInput = $('#speed-val');
