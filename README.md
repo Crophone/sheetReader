@@ -1,4 +1,5 @@
 # SheetReader · 滑动读谱器
+效果地址： https://crophone.github.io/sheetReader/
 
 上传某首歌的多张吉他六线谱图片，自动合并为连续长谱；演奏时曲谱根据演奏进度**自动向下滚动**，
 不用手动翻页和滑动，解放双手。
