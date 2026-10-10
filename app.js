@@ -164,7 +164,11 @@ async function importBundledGuitarSheets() {
     manifest = await res.json();
   } catch (_) { return 0; }
   if (!manifest || !Array.isArray(manifest.songs)) return 0;
-  const existing = await listSongs();
+  let existing = await listSongs();
+  const manifestVersion = Number(manifest.version) || 1;
+  const stale = existing.filter(s => s.sourceKey && s.sourceKey.startsWith('bundled:') && s.sourceVersion !== manifestVersion);
+  for (const song of stale) await deleteSong(song.id);
+  if (stale.length) existing = await listSongs();
   const keys = new Set(existing.map(s => s.sourceKey).filter(Boolean));
   let created = 0;
   for (const item of manifest.songs) {
@@ -183,7 +187,7 @@ async function importBundledGuitarSheets() {
     if (!loaded.length) continue;
     const song = await saveSong({
       id: uid(), name: item.name, artist: '', createdAt: Date.now(), durationSec: 0,
-      originalBpm: 70, playBpm: 70, playbackSpeed: 1, sourceKey,
+      originalBpm: 70, playBpm: 70, playbackSpeed: 1, sourceKey, sourceVersion: manifestVersion,
     });
     for (let i = 0; i < loaded.length; i++) {
       const x = loaded[i];

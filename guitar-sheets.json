@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "songs": [
     {
       "name": "yellow",
@@ -136,15 +136,9 @@
       "name": "彩虹",
       "variant": 1,
       "pages": [
-        "吉他谱/彩虹/3.jpg"
-      ]
-    },
-    {
-      "name": "彩虹",
-      "variant": 2,
-      "pages": [
         "吉他谱/彩虹/1.png",
-        "吉他谱/彩虹/2.png"
+        "吉他谱/彩虹/2.png",
+        "吉他谱/彩虹/3.png"
       ]
     },
     {
@@ -159,23 +153,8 @@
       "name": "情歌",
       "variant": 1,
       "pages": [
-        "吉他谱/情歌/3.jpg"
-      ]
-    },
-    {
-      "name": "情歌",
-      "variant": 2,
-      "pages": [
         "吉他谱/情歌/1.png",
         "吉他谱/情歌/2.png"
-      ]
-    },
-    {
-      "name": "情歌",
-      "variant": 3,
-      "pages": [
-        "吉他谱/情歌/1.webp",
-        "吉他谱/情歌/2.webp"
       ]
     },
     {
