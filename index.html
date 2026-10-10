@@ -28,7 +28,14 @@
     <span class="brand-name">SheetReader</span>
     <span class="brand-sub">六线谱自动滚动阅读器</span>
   </div>
-  <button class="btn icon-btn" id="theme-toggle" title="切换亮色 / 暗色主题"></button>
+  <div class="topbar-actions">
+    <label class="effect-toggle" title="显示或隐藏黄色进度线与粉色演奏区域">
+      <input type="checkbox" id="effect-toggle" checked>
+      <span class="switch" aria-hidden="true"></span>
+      <span class="effect-label">演奏提示</span>
+    </label>
+    <button class="btn icon-btn" id="theme-toggle" type="button" title="切换亮色 / 暗色主题" aria-label="切换亮色或暗色主题"></button>
+  </div>
 </header>
 <main id="app"></main>
 <div id="toast-box" aria-live="polite"></div>

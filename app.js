@@ -622,7 +622,8 @@ async function renderPlayer(app, songId, token) {
   let duration = song.durationSec > 0 ? song.durationSec * originalBpm / playBpm : pages.length * 64 * 60 / playBpm;
   let progress = 0;
   let playing = false;
-  let speed = 1;
+  /* 底部倍速直接控制播放时间推进和曲谱滑动速度，并在歌曲间保留设置。 */
+  let speed = clamp(Number(localStorage.getItem('sr-playback-speed')) || 1, 0.25, 3);
   /* 显示缩放以当前视觉尺寸为 100%；内部实际宽度基准为容器的 50%。 */
   let zoom = 1;
   let rafId = 0;
@@ -637,11 +638,14 @@ async function renderPlayer(app, songId, token) {
         '<span>' + esc(song.artist || '未知歌手') + ' · ' + pages.length + ' 页 · 已合并为连续长谱</span></div>' +
         '<div class="pt-controls">' +
           '<div class="bpm-controls">' +
-            '<label>原版 BPM <input id="original-bpm" type="number" min="30" max="300" step="1"></label>' +
-            '<span class="bpm-status" id="bpm-status">自动查询</span>' +
+            '<label class="bpm-label original-label" for="original-bpm">原版 BPM</label>' +
+            '<input id="original-bpm" type="number" min="30" max="300" step="1">' +
             '<button class="btn ghost sm" id="search-bpm">重新查询</button>' +
-            '<label>播放 BPM <input id="play-bpm" type="number" min="30" max="300" step="1"></label>' +
+            '<span class="bpm-status" id="bpm-status">自动查询</span>' +
+            '<label class="bpm-label play-label" for="play-bpm">播放 BPM</label>' +
+            '<input id="play-bpm" type="number" min="30" max="300" step="1">' +
             '<button class="btn ghost sm" id="reset-bpm">使用原版</button>' +
+            '<span class="bpm-spacer" aria-hidden="true"></span>' +
           '</div>' +
           '<div class="zoom-ctl">' +
             '<button id="zoom-out" class="btn icon-btn" title="缩小">−</button>' +
@@ -663,7 +667,7 @@ async function renderPlayer(app, songId, token) {
         '<span class="time" id="time-total">0:00</span>' +
         '<div class="speed-ctl">' +
           '<button id="speed-down" class="btn icon-btn" title="滚动减速（-）">−</button>' +
-          '<span id="speed-val">1.00×</span>' +
+          '<label class="speed-input-wrap"><input id="speed-val" type="number" min="0.25" max="3" step="0.01" inputmode="decimal" value="1.00" aria-label="播放倍速">×</label>' +
           '<button id="speed-up" class="btn icon-btn" title="滚动加速（+）">＋</button>' +
         '</div>' +
       '</div>' +
@@ -675,7 +679,7 @@ async function renderPlayer(app, songId, token) {
   const btnPlay = $('#btn-play');
   const seek = $('#seek');
 
-  /* 拼接谱页：多页图片纵向无缝合并 + 末尾留白（让最后一行能升到指示线处） */
+  /* 拼接谱页：多页图片纵向无缝合并，播放结束即停在最后一页，不追加末尾空白。 */
   const imgEls = pages.map(p => {
     const im = new Image();
     im.src = URLPool.make(p.blob);
@@ -683,15 +687,8 @@ async function renderPlayer(app, songId, token) {
     sheet.appendChild(im);
     return im;
   });
-  const tail = document.createElement('div');
-  tail.className = 'tail';
-  sheet.appendChild(tail);
   await Promise.all(imgEls.map(im => (im.decode ? im.decode().catch(() => {}) : Promise.resolve())));
   if (token !== renderToken) return;
-
-  function fitTail() {
-    tail.style.height = Math.round(scroller.clientHeight * (1 - PH_RATIO)) + 'px';
-  }
 
   function contentHeight() {
     return imgEls.reduce((sum, im) => sum + im.offsetHeight, 0);
@@ -730,7 +727,9 @@ async function renderPlayer(app, songId, token) {
 
   function applyScroll() {
     const vh = scroller.clientHeight;
-    const y = clamp(timeToSheetY(progress / duration) - PH_RATIO * vh, 0, Math.max(0, sheet.offsetHeight - vh));
+    const maxY = Math.max(0, contentHeight() - vh);
+    /* 0 秒对应顶部，之后立即按完整可滚动距离推进，避免前段被 playhead 偏移量钳制而不动。 */
+    const y = progress >= duration ? maxY : clamp(progress / duration * maxY, 0, maxY);
     autoScrolling = true;
     scroller.scrollTop = y;
   }
@@ -759,9 +758,18 @@ async function renderPlayer(app, songId, token) {
     setPlayIcon();
   }
 
+  function setSpeed(next) {
+    speed = clamp(Math.round(next * 100) / 100, 0.25, 3);
+    $('#speed-val').value = speed.toFixed(2);
+    $('#speed-down').disabled = speed <= 0.25;
+    $('#speed-up').disabled = speed >= 3;
+    try { localStorage.setItem('sr-playback-speed', String(speed)); } catch (_) {}
+    /* 重置时间戳，避免调整瞬间把按钮操作耗时计入播放进度。 */
+    lastTs = 0;
+  }
+
   function bumpSpeed(d) {
-    speed = clamp(Math.round((speed + d) * 100) / 100, 0.25, 3);
-    $('#speed-val').textContent = speed.toFixed(2) + '×';
+    setSpeed(speed + d);
   }
 
   function setZoom(z) {
@@ -778,6 +786,20 @@ async function renderPlayer(app, songId, token) {
   $('#btn-back').onclick = () => navigate('#/song/' + songId);
   $('#speed-up').onclick = () => bumpSpeed(0.05);
   $('#speed-down').onclick = () => bumpSpeed(-0.05);
+  const speedInput = $('#speed-val');
+  function commitSpeedInput() {
+    const value = Number(speedInput.value);
+    if (!Number.isFinite(value)) {
+      speedInput.value = speed.toFixed(2);
+      toast('请输入 0.25 到 3.00 之间的倍速');
+      return;
+    }
+    setSpeed(value);
+  }
+  speedInput.addEventListener('change', commitSpeedInput);
+  speedInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commitSpeedInput(); speedInput.blur(); }
+  });
   $('#zoom-in').onclick = () => setZoom(zoom * 1.25);
   $('#zoom-out').onclick = () => setZoom(zoom / 1.25);
   seek.addEventListener('input', e => setProgress(e.target.value / 1000 * duration));
@@ -872,18 +894,85 @@ async function renderPlayer(app, songId, token) {
   $('#reset-bpm').onclick = () => { playBpmEl.value = originalBpmEl.value; saveBpm(); };
   searchOriginalBpm(false);
 
-  /* 用户手动滚动（滚轮 / 拖动滚动条）：同步进度，播放中从新位置继续 */
-  scroller.addEventListener('scroll', () => {
-    if (autoScrolling) { autoScrolling = false; return; }
+  function progressFromScroll() {
     const H = contentHeight();
     const vh = scroller.clientHeight;
+    const maxY = Math.max(0, H - vh);
     if (H <= 0 || vh <= 0) return;
-    progress = sheetYToTime(scroller.scrollTop + PH_RATIO * vh) * duration;
+    progress = maxY > 0 ? clamp(scroller.scrollTop / maxY, 0, 1) * duration : 0;
+    lastTs = 0;
     updateHud();
+  }
+
+  /* 用户手动滚动条定位：同步进度，播放中从新位置继续。 */
+  scroller.addEventListener('scroll', () => {
+    if (autoScrolling) { autoScrolling = false; return; }
+    progressFromScroll();
   }, { passive: true });
+
+  /* 手动定位统一走动画帧插值：速度更快，但视觉连续不跳变。 */
+  const MANUAL_SCROLL_FACTOR = 1.75;
+  let manualTargetY = scroller.scrollTop;
+  let manualRaf = 0;
+  function animateManualScroll() {
+    const diff = manualTargetY - scroller.scrollTop;
+    if (Math.abs(diff) < 0.5) {
+      scroller.scrollTop = manualTargetY;
+      progressFromScroll();
+      manualRaf = 0;
+      return;
+    }
+    autoScrolling = true;
+    scroller.scrollTop += diff * 0.34;
+    progressFromScroll();
+    manualRaf = requestAnimationFrame(animateManualScroll);
+  }
+  function smoothScrollTo(y) {
+    const maxY = Math.max(0, contentHeight() - scroller.clientHeight);
+    manualTargetY = clamp(y, 0, maxY);
+    if (!manualRaf) manualRaf = requestAnimationFrame(animateManualScroll);
+  }
+
+  /* 鼠标滚轮改变目标进度；连续滚轮事件累加目标位置。 */
+  scroller.addEventListener('wheel', e => {
+    if (Math.abs(e.deltaY) < 0.1) return;
+    e.preventDefault();
+    const vh = scroller.clientHeight;
+    const unit = e.deltaMode === 1 ? 18 : e.deltaMode === 2 ? vh : 1;
+    smoothScrollTo(manualTargetY + e.deltaY * unit * MANUAL_SCROLL_FACTOR);
+  }, { passive: false });
+
+  /* 单指拖动采用较高位移倍率，并以动画帧平滑追随手指。 */
+  let touchId = null;
+  let touchY = 0;
+  let touchScrollTop = 0;
+  let touchMoved = false;
+  scroller.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    touchId = t.identifier;
+    touchY = t.clientY;
+    touchScrollTop = scroller.scrollTop;
+    manualTargetY = scroller.scrollTop;
+    touchMoved = false;
+    lastTs = 0;
+  }, { passive: true });
+  scroller.addEventListener('touchmove', e => {
+    if (touchId == null) return;
+    const t = Array.from(e.touches).find(item => item.identifier === touchId);
+    if (!t) return;
+    const dy = t.clientY - touchY;
+    if (Math.abs(dy) > 3) touchMoved = true;
+    e.preventDefault();
+    smoothScrollTo(touchScrollTop - dy * MANUAL_SCROLL_FACTOR);
+  }, { passive: false });
+  function finishTouch() { touchId = null; lastTs = 0; }
+  scroller.addEventListener('touchend', finishTouch, { passive: true });
+  scroller.addEventListener('touchcancel', finishTouch, { passive: true });
 
   /* 点击谱面任意位置：跳转到对应进度 */
   scroller.addEventListener('click', e => {
+    if (touchMoved) { touchMoved = false; return; }
     const r = sheet.getBoundingClientRect();
     if (r.height <= 0) return;
     setProgress(sheetYToTime(clamp(e.clientY - r.top, 0, contentHeight())) * duration);
@@ -904,7 +993,7 @@ async function renderPlayer(app, songId, token) {
   let resizeRaf = 0;
   function onResize() {
     cancelAnimationFrame(resizeRaf);
-    resizeRaf = requestAnimationFrame(() => { fitTail(); applyScroll(); });
+    resizeRaf = requestAnimationFrame(applyScroll);
   }
   window.addEventListener('resize', onResize);
   window.addEventListener('orientationchange', onResize);
@@ -928,8 +1017,8 @@ async function renderPlayer(app, songId, token) {
     rafId = requestAnimationFrame(loop);
   }
 
-  fitTail();
   setZoom(zoom);
+  setSpeed(speed);
   updateHud();
   setPlayIcon();
   applyScroll();
@@ -938,6 +1027,7 @@ async function renderPlayer(app, songId, token) {
   currentDestroy = () => {
     cancelAnimationFrame(rafId);
     cancelAnimationFrame(resizeRaf);
+    cancelAnimationFrame(manualRaf);
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', onResize);
     window.removeEventListener('orientationchange', onResize);
@@ -1038,7 +1128,40 @@ async function createDemoSong() {
   return song;
 }
 
-/* ---------------- 启动 ---------------- */
+/* ---------------- 全局外观设置 / 启动 ---------------- */
+const themeToggle = $('#theme-toggle');
+const effectToggle = $('#effect-toggle');
+
+function currentTheme() {
+  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+}
+
+function updateThemeButton() {
+  const isLight = currentTheme() === 'light';
+  themeToggle.innerHTML = icon(isLight ? 'moon' : 'sun', 19);
+  themeToggle.title = isLight ? '切换到暗色主题' : '切换到亮色主题';
+  themeToggle.setAttribute('aria-label', themeToggle.title);
+  themeToggle.setAttribute('aria-pressed', String(isLight));
+}
+
+themeToggle.addEventListener('click', () => {
+  const next = currentTheme() === 'light' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('sr-theme', next); } catch (_) {}
+  updateThemeButton();
+});
+
+let effectsEnabled = true;
+try { effectsEnabled = localStorage.getItem('sr-effects') !== 'off'; } catch (_) {}
+effectToggle.checked = effectsEnabled;
+document.documentElement.classList.toggle('effects-off', !effectsEnabled);
+effectToggle.addEventListener('change', () => {
+  effectsEnabled = effectToggle.checked;
+  document.documentElement.classList.toggle('effects-off', !effectsEnabled);
+  try { localStorage.setItem('sr-effects', effectsEnabled ? 'on' : 'off'); } catch (_) {}
+});
+
+updateThemeButton();
 $('#brand').addEventListener('click', () => navigate('#/library'));
 window.addEventListener('hashchange', render);
 render();
