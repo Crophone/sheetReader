@@ -623,9 +623,9 @@ async function renderPlayer(app, songId, token) {
   let progress = 0;
   let playing = false;
   /* 底部倍速直接控制播放时间推进和曲谱滑动速度，并在歌曲间保留设置。 */
-  let speed = clamp(Number(localStorage.getItem('sr-playback-speed')) || 1, 0.25, 3);
-  /* 显示缩放以当前视觉尺寸为 100%；内部实际宽度基准为容器的 50%。 */
-  let zoom = 1;
+  let speed = clamp(Number(localStorage.getItem('sr-playback-speed')) || 1, 0.25, 5);
+  /* 桌面端当前视觉尺寸标记为 100%；内部宽度基准为容器的 80%。 */
+  let zoom = 100;
   let rafId = 0;
   let lastTs = 0;
   let autoScrolling = false;
@@ -647,11 +647,9 @@ async function renderPlayer(app, songId, token) {
             '<button class="btn ghost sm" id="reset-bpm">使用原版</button>' +
             '<span class="bpm-spacer" aria-hidden="true"></span>' +
           '</div>' +
-          '<div class="zoom-ctl">' +
-            '<button id="zoom-out" class="btn icon-btn" title="缩小">−</button>' +
-            '<span id="zoom-val">100%</span>' +
-            '<button id="zoom-in" class="btn icon-btn" title="放大">＋</button>' +
-          '</div>' +
+          '<label class="zoom-ctl">缩放 ' +
+            '<input id="zoom-val" type="number" min="10" max="500" step="1" inputmode="numeric" value="100" aria-label="曲谱缩放百分比">%' +
+          '</label>' +
         '</div>' +
       '</div>' +
       '<div class="stage">' +
@@ -662,13 +660,15 @@ async function renderPlayer(app, songId, token) {
       '<div class="player-bar">' +
         '<button class="btn icon-btn" id="btn-begin" title="回到开头">' + icon('rewind') + '</button>' +
         '<button class="btn primary round" id="btn-play" title="播放（空格）">' + icon('play', 22) + '</button>' +
-        '<span class="time" id="time-cur">0:00</span>' +
-        '<input type="range" id="seek" min="0" max="1000" value="0" step="1" title="演奏进度">' +
-        '<span class="time" id="time-total">0:00</span>' +
+        '<div class="progress-ctl">' +
+          '<span class="time" id="time-cur">0:00</span>' +
+          '<input type="range" id="seek" min="0" max="1000" value="0" step="1" title="演奏进度">' +
+          '<span class="time" id="time-total">0:00</span>' +
+        '</div>' +
         '<div class="speed-ctl">' +
           '<button id="speed-down" class="btn icon-btn" title="滚动减速（-）">−</button>' +
-          '<input id="speed-range" type="range" min="0.25" max="3" step="0.01" value="1" aria-label="滑动播放速度">' +
-          '<label class="speed-input-wrap"><input id="speed-val" type="number" min="0.25" max="3" step="0.01" inputmode="decimal" value="1.00" aria-label="播放速度"></label>' +
+          '<input id="speed-range" type="range" min="0.25" max="5" step="0.01" value="1" aria-label="滑动播放速度">' +
+          '<label class="speed-input-wrap"><input id="speed-val" type="number" min="0.25" max="5" step="0.01" inputmode="decimal" value="1.00" aria-label="播放速度"></label>' +
           '<button id="speed-up" class="btn icon-btn" title="滚动加速（+）">＋</button>' +
         '</div>' +
       '</div>' +
@@ -759,11 +759,11 @@ async function renderPlayer(app, songId, token) {
   }
 
   function setSpeed(next) {
-    speed = clamp(Math.round(next * 100) / 100, 0.25, 3);
+    speed = clamp(Math.round(next * 100) / 100, 0.25, 5);
     $('#speed-val').value = speed.toFixed(2);
     $('#speed-range').value = String(speed);
     $('#speed-down').disabled = speed <= 0.25;
-    $('#speed-up').disabled = speed >= 3;
+    $('#speed-up').disabled = speed >= 5;
     try { localStorage.setItem('sr-playback-speed', String(speed)); } catch (_) {}
     /* 重置时间戳，避免调整瞬间把按钮操作耗时计入播放进度。 */
     lastTs = 0;
@@ -774,10 +774,10 @@ async function renderPlayer(app, songId, token) {
   }
 
   function setZoom(z) {
-    zoom = clamp(z, 0.1, 6);
-    sheet.style.width = zoom * 50 + '%';
-    $('#zoom-val').textContent = Math.round(zoom * 100) + '%';
-    $('#zoom-out').disabled = zoom <= 0.1;
+    zoom = clamp(Math.round(Number(z) || 100), 10, 500);
+    /* 显示 100% 对应原先 80% 的实际宽度。 */
+    sheet.style.width = zoom * 0.8 + '%';
+    $('#zoom-val').value = String(zoom);
     requestAnimationFrame(applyScroll);
   }
 
@@ -792,7 +792,7 @@ async function renderPlayer(app, songId, token) {
     const value = Number(speedInput.value);
     if (!Number.isFinite(value)) {
       speedInput.value = speed.toFixed(2);
-      toast('请输入 0.25 到 3.00 之间的倍速');
+      toast('请输入 0.25 到 5.00 之间的速度');
       return;
     }
     setSpeed(value);
@@ -803,8 +803,12 @@ async function renderPlayer(app, songId, token) {
   speedInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); commitSpeedInput(); speedInput.blur(); }
   });
-  $('#zoom-in').onclick = () => setZoom(zoom * 1.25);
-  $('#zoom-out').onclick = () => setZoom(zoom / 1.25);
+  const zoomInput = $('#zoom-val');
+  function commitZoomInput() { setZoom(zoomInput.value); }
+  zoomInput.addEventListener('change', commitZoomInput);
+  zoomInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commitZoomInput(); zoomInput.blur(); }
+  });
   seek.addEventListener('input', e => setProgress(e.target.value / 1000 * duration));
 
   /* BPM 设置：原版值可由查询服务回填，也允许校正；播放 BPM 持久保存并实时改变滚动时长。 */
