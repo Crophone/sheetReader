@@ -667,6 +667,7 @@ async function renderPlayer(app, songId, token) {
         '<span class="time" id="time-total">0:00</span>' +
         '<div class="speed-ctl">' +
           '<button id="speed-down" class="btn icon-btn" title="滚动减速（-）">−</button>' +
+          '<input id="speed-range" type="range" min="0.25" max="3" step="0.01" value="1" aria-label="滑动播放速度">' +
           '<label class="speed-input-wrap"><input id="speed-val" type="number" min="0.25" max="3" step="0.01" inputmode="decimal" value="1.00" aria-label="播放倍速">×</label>' +
           '<button id="speed-up" class="btn icon-btn" title="滚动加速（+）">＋</button>' +
         '</div>' +
@@ -761,6 +762,7 @@ async function renderPlayer(app, songId, token) {
   function setSpeed(next) {
     speed = clamp(Math.round(next * 100) / 100, 0.25, 3);
     $('#speed-val').value = speed.toFixed(2);
+    $('#speed-range').value = String(speed);
     $('#speed-down').disabled = speed <= 0.25;
     $('#speed-up').disabled = speed >= 3;
     try { localStorage.setItem('sr-playback-speed', String(speed)); } catch (_) {}
@@ -796,6 +798,8 @@ async function renderPlayer(app, songId, token) {
     }
     setSpeed(value);
   }
+  const speedRange = $('#speed-range');
+  speedRange.addEventListener('input', () => setSpeed(Number(speedRange.value)));
   speedInput.addEventListener('change', commitSpeedInput);
   speedInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); commitSpeedInput(); speedInput.blur(); }
@@ -971,8 +975,20 @@ async function renderPlayer(app, songId, token) {
   scroller.addEventListener('touchcancel', finishTouch, { passive: true });
 
   /* 点击谱面任意位置：跳转到对应进度 */
+  const playerBar = $('.player-bar');
+  let controlsTimer = 0;
+  function showMobileControls() {
+    if (!matchMedia('(max-width: 767px)').matches) return;
+    playerBar.classList.add('mobile-visible');
+    clearTimeout(controlsTimer);
+    controlsTimer = setTimeout(() => playerBar.classList.remove('mobile-visible'), 4000);
+  }
   scroller.addEventListener('click', e => {
     if (touchMoved) { touchMoved = false; return; }
+    if (matchMedia('(max-width: 767px)').matches) {
+      showMobileControls();
+      return;
+    }
     const r = sheet.getBoundingClientRect();
     if (r.height <= 0) return;
     setProgress(sheetYToTime(clamp(e.clientY - r.top, 0, contentHeight())) * duration);
@@ -1028,6 +1044,7 @@ async function renderPlayer(app, songId, token) {
     cancelAnimationFrame(rafId);
     cancelAnimationFrame(resizeRaf);
     cancelAnimationFrame(manualRaf);
+    clearTimeout(controlsTimer);
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('resize', onResize);
     window.removeEventListener('orientationchange', onResize);
