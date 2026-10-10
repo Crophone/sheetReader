@@ -352,6 +352,11 @@ async function renderLibrary(app, token) {
   let songs = await listSongs();
   const imported = await importBundledGuitarSheets();
   if (imported) songs = await listSongs();
+  songs.sort((a, b) => {
+    const byName = String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN', { numeric: true, sensitivity: 'base' });
+    if (byName) return byName;
+    return String(a.sourceKey || a.id || '').localeCompare(String(b.sourceKey || b.id || ''), 'zh-CN', { numeric: true });
+  });
   if (token !== renderToken) return;
 
   app.innerHTML =
@@ -364,7 +369,12 @@ async function renderLibrary(app, token) {
           '<button class="btn primary" id="btn-new">' + icon('plus') + ' 新建曲谱</button>' +
         '</div>' +
       '</div>' +
+      '<div class="library-search">' +
+        '<input id="song-search" type="search" placeholder="搜索歌曲名、歌手或来源…" autocomplete="off" aria-label="搜索曲谱">' +
+        '<span id="search-count" class="muted"></span>' +
+      '</div>' +
       '<div class="songs-grid" id="songs-grid"></div>' +
+      '<div class="empty small" id="search-empty" style="display:none"><p>没有找到匹配的曲谱</p><span>换一个歌曲名或歌手试试</span></div>' +
       '<div class="empty" id="empty-state" style="display:none">' + icon('music', 42) +
         '<p>曲谱库还是空的</p>' +
         '<span>点击「新建曲谱」上传你喜欢的歌曲六线谱图片，或先载入示例曲谱体验自动滚动演奏</span>' +
@@ -392,6 +402,26 @@ async function renderLibrary(app, token) {
       bindSongCard(gridEl.lastElementChild, s, token);
     });
   }
+
+  const searchInput = $('#song-search');
+  const searchCount = $('#search-count');
+  const searchEmpty = $('#search-empty');
+  function filterSongs() {
+    const q = searchInput.value.trim().toLocaleLowerCase();
+    let visible = 0;
+    $$('.song-card', gridEl).forEach(card => {
+      const song = songs.find(s => s.id === card.dataset.id);
+      const haystack = ((song && song.name) || '') + ' ' + ((song && song.artist) || '');
+      const match = !q || haystack.toLocaleLowerCase().includes(q);
+      card.style.display = match ? '' : 'none';
+      if (match) visible++;
+    });
+    searchCount.textContent = q ? '找到 ' + visible + ' 首' : '共 ' + songs.length + ' 首';
+    searchEmpty.style.display = songs.length && !visible ? '' : 'none';
+    gridEl.style.display = songs.length && visible ? '' : 'none';
+  }
+  searchInput.addEventListener('input', filterSongs);
+  filterSongs();
 
   $('#btn-new').onclick = () => openNewSongModal(async (name, artist) => {
     const song = await saveSong({

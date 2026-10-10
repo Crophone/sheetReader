@@ -238,6 +238,27 @@ img { -webkit-user-drag: none; }
 
 .library-view { overflow-y: auto; }
 
+.library-search {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.library-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--panel);
+  font: inherit;
+  outline: none;
+}
+.library-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.library-search #search-count { flex: none; min-width: 62px; text-align: right; font-size: 12px; }
+
 .songs-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
@@ -868,6 +889,8 @@ img { -webkit-user-drag: none; }
   .topbar-actions { gap: 7px; }
   .effect-label { display: none; }
   .lib-head { align-items: stretch; margin-bottom: 14px; }
+  .library-search { gap: 8px; margin-bottom: 12px; }
+  .library-search input { font-size: 16px; }
   .lib-actions { width: 100%; }
   .lib-actions .btn { flex: 1; }
   .songs-grid { grid-template-columns: 1fr; gap: 12px; }
