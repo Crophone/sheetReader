@@ -668,11 +668,10 @@ async function renderPlayer(app, songId, token) {
         '<div class="speed-ctl">' +
           '<button id="speed-down" class="btn icon-btn" title="滚动减速（-）">−</button>' +
           '<input id="speed-range" type="range" min="0.25" max="3" step="0.01" value="1" aria-label="滑动播放速度">' +
-          '<label class="speed-input-wrap"><input id="speed-val" type="number" min="0.25" max="3" step="0.01" inputmode="decimal" value="1.00" aria-label="播放倍速">×</label>' +
+          '<label class="speed-input-wrap"><input id="speed-val" type="number" min="0.25" max="3" step="0.01" inputmode="decimal" value="1.00" aria-label="播放速度"></label>' +
           '<button id="speed-up" class="btn icon-btn" title="滚动加速（+）">＋</button>' +
         '</div>' +
       '</div>' +
-      '<div class="player-hint">空格：播放 / 暂停 · ← →：快退 / 快进 5 秒 · + −：滚动速度 · 点击谱面任意位置跳转 · 滚轮手动定位后自动从该处续播</div>' +
     '</div>';
 
   const scroller = $('#scroller');

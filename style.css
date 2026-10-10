@@ -714,14 +714,6 @@ img { -webkit-user-drag: none; }
 }
 #seek { flex: 1; accent-color: var(--accent); height: 22px; cursor: pointer; }
 
-.player-hint {
-  flex: none;
-  text-align: center;
-  font-size: 12px;
-  color: var(--muted);
-  padding: 5px 12px 8px;
-  background: var(--panel);
-}
 
 /* ---------------- Toast ---------------- */
 #toast-box {
@@ -849,7 +841,13 @@ img { -webkit-user-drag: none; }
   .bpm-spacer { grid-area: spacer; }
   .zoom-ctl { justify-self: end; }
   .stage { min-height: 180px; }
-  /* 移动端以浏览器可视宽度的 95% 展示谱图，兼顾可读性与最大内容量。 */
+  /* 移动端以浏览器可视宽度的 95% 展示谱图，只允许纵向滚动。 */
+  .scroller {
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: auto;
+  }
+  .scroller::-webkit-scrollbar:horizontal { display: none; height: 0; }
   .sheet { width: 95vw !important; max-width: 95vw; }
   .measure-highlight { left: 2.5vw; right: 2.5vw; height: 44px; top: calc(35% - 46px); }
   .measure-highlight span { display: none; }
@@ -886,7 +884,6 @@ img { -webkit-user-drag: none; }
   #speed-range { flex: 1; min-width: 0; accent-color: var(--accent); }
   #speed-val { width: 58px; }
   .time { display: none; }
-  .player-hint { display: none; }
   #toast-box { bottom: calc(112px + env(safe-area-inset-bottom)); }
 }
 
