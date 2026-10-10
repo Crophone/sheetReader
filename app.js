@@ -155,6 +155,45 @@ async function listPages(songId) {
 async function putPage(page) { return dbPut('pages', page); }
 async function removePage(id) { return dbDelete('pages', id); }
 
+/* 将仓库“吉他谱”目录清单首次导入浏览器曲谱库；sourceKey 防止重复生成。 */
+async function importBundledGuitarSheets() {
+  let manifest;
+  try {
+    const res = await fetch('guitar-sheets.json', { cache: 'no-cache' });
+    if (!res.ok) return 0;
+    manifest = await res.json();
+  } catch (_) { return 0; }
+  if (!manifest || !Array.isArray(manifest.songs)) return 0;
+  const existing = await listSongs();
+  const keys = new Set(existing.map(s => s.sourceKey).filter(Boolean));
+  let created = 0;
+  for (const item of manifest.songs) {
+    const sourceKey = 'bundled:' + item.name + ':' + item.variant;
+    if (keys.has(sourceKey) || !Array.isArray(item.pages) || !item.pages.length) continue;
+    const loaded = [];
+    for (const path of item.pages) {
+      try {
+        const res = await fetch(encodeURI(path));
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const blob = await res.blob();
+        const meta = await imageMeta(blob);
+        loaded.push({ path, blob, meta });
+      } catch (err) { console.error('内置谱图加载失败', path, err); }
+    }
+    if (!loaded.length) continue;
+    const song = await saveSong({
+      id: uid(), name: item.name, artist: '', createdAt: Date.now(), durationSec: 0,
+      originalBpm: 70, playBpm: 70, playbackSpeed: 1, sourceKey,
+    });
+    for (let i = 0; i < loaded.length; i++) {
+      const x = loaded[i];
+      await putPage({ id: uid(), songId: song.id, order: i, name: x.path.split('/').pop(), type: x.blob.type, blob: x.blob, w: x.meta.w, h: x.meta.h, sourcePath: x.path });
+    }
+    created++;
+  }
+  return created;
+}
+
 /* ---------------- 图片工具 ---------------- */
 function blobToImage(blob) {
   return new Promise((res, rej) => {
@@ -306,7 +345,9 @@ function showStorageError(app, err) {
 
 /* ---------------- 曲谱库视图 ---------------- */
 async function renderLibrary(app, token) {
-  const songs = await listSongs();
+  let songs = await listSongs();
+  const imported = await importBundledGuitarSheets();
+  if (imported) songs = await listSongs();
   if (token !== renderToken) return;
 
   app.innerHTML =
@@ -326,6 +367,7 @@ async function renderLibrary(app, token) {
       '</div>' +
     '</div>';
 
+  if (imported) toast('已从“吉他谱”目录生成 ' + imported + ' 首曲谱');
   const gridEl = $('#songs-grid');
   if (!songs.length) {
     gridEl.style.display = 'none';
