@@ -9,9 +9,9 @@
   --border: #2a303c;
   --text: #e9ecf1;
   --muted: #98a2b3;
-  --accent: #e86f9b;
-  --accent-press: #d85888;
-  --accent-soft: rgba(232, 111, 155, .16);
+  --accent: #e47ba0;
+  --accent-press: #e47ba0;
+  --accent-soft: rgba(228, 123, 160, .16);
   --danger: #e5484d;
   --danger-soft: rgba(229, 72, 93, .12);
   --paper: #fdfcf8;
@@ -27,8 +27,8 @@
   --cover-icon: #39414f;
   --sbar-thumb: #333a47;
   --sbar-thumb-hover: #414a5a;
-  --ph-line: rgba(232, 111, 155, .92);       /* 播放指示线 */
-  --ph-glow: rgba(232, 111, 155, .5);
+  --ph-line: rgba(228, 123, 160, .92);       /* 播放指示线 */
+  --ph-glow: rgba(228, 123, 160, .5);
 }
 
 /* 亮色主题：覆盖同一组变量 */
@@ -39,9 +39,9 @@
   --border: #d9dee6;
   --text: #23272f;
   --muted: #69737f;
-  --accent: #c94f7d;
-  --accent-press: #b43c6b;
-  --accent-soft: rgba(201, 79, 125, .13);
+  --accent: #e47ba0;
+  --accent-press: #e47ba0;
+  --accent-soft: rgba(228, 123, 160, .14);
   --danger: #d63a3f;
   --danger-soft: rgba(214, 58, 63, .09);
   --paper: #ffffff;
@@ -56,8 +56,8 @@
   --cover-icon: #b3bcc9;
   --sbar-thumb: #c4cad4;
   --sbar-thumb-hover: #aeb6c2;
-  --ph-line: rgba(201, 79, 125, .95);
-  --ph-glow: rgba(201, 79, 125, .36);
+  --ph-line: rgba(228, 123, 160, .95);
+  --ph-glow: rgba(228, 123, 160, .38);
 }
 
 * { box-sizing: border-box; }
@@ -585,7 +585,7 @@ img { -webkit-user-drag: none; }
   outline: none;
 }
 .bpm-controls input:focus { border-color: var(--accent); }
-.bpm-status { color: #e789a8; font-size: 11px; }
+.bpm-status { color: #e47ba0; font-size: 11px; }
 
 .zoom-ctl, .speed-ctl {
   display: flex;
@@ -668,9 +668,9 @@ img { -webkit-user-drag: none; }
   right: 8%;
   height: 52px;
   border-radius: 8px 8px 3px 3px;
-  background: linear-gradient(180deg, rgba(255, 123, 166, .08), rgba(255, 105, 155, .22));
-  border-bottom: 1px solid rgba(255, 116, 162, .48);
-  box-shadow: 0 4px 20px rgba(255, 105, 155, .12);
+  background: linear-gradient(180deg, rgba(228, 123, 160, .08), rgba(228, 123, 160, .22));
+  border-bottom: 1px solid rgba(228, 123, 160, .48);
+  box-shadow: 0 4px 20px rgba(228, 123, 160, .14);
   pointer-events: none;
   z-index: 4;
 }
@@ -680,8 +680,8 @@ img { -webkit-user-drag: none; }
   top: 5px;
   padding: 2px 7px;
   border-radius: 9px;
-  color: rgba(255, 225, 235, .9);
-  background: rgba(209, 63, 112, .52);
+  color: #ffffff;
+  background: rgba(228, 123, 160, .72);
   font-size: 10px;
   letter-spacing: .08em;
 }

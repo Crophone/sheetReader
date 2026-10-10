@@ -624,7 +624,7 @@ async function renderPlayer(app, songId, token) {
   let playing = false;
   /* 底部倍速直接控制播放时间推进和曲谱滑动速度，并在歌曲间保留设置。 */
   let speed = clamp(Number(song.playbackSpeed) || 1, 0.25, 5);
-  /* 桌面端当前视觉尺寸标记为 100%；内部宽度基准为容器的 80%。 */
+  /* 桌面端当前视觉尺寸标记为 100%；内部宽度基准为容器的 55%。 */
   let zoom = 100;
   let rafId = 0;
   let lastTs = 0;
@@ -788,8 +788,8 @@ async function renderPlayer(app, songId, token) {
 
   function setZoom(z) {
     zoom = clamp(Math.round(Number(z) || 100), 10, 500);
-    /* 显示 100% 对应原先 80% 的实际宽度。 */
-    sheet.style.width = zoom * 0.8 + '%';
+    /* 显示 100% 对应当前 55% 的实际宽度。 */
+    sheet.style.width = zoom * 0.55 + '%';
     $('#zoom-val').value = String(zoom);
     requestAnimationFrame(applyScroll);
   }
