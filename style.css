@@ -874,8 +874,14 @@ img { -webkit-user-drag: none; }
     visibility: visible;
     transform: translateY(0);
   }
-  .player-bar > :not(.speed-ctl) { display: none !important; }
-  .speed-ctl { width: 100%; justify-content: center; gap: 8px; }
+  .player-bar > :not(#btn-play):not(.speed-ctl) { display: none !important; }
+  .player-bar {
+    align-items: center;
+    gap: 10px;
+  }
+  .player-bar.mobile-visible { display: flex; }
+  #btn-play { flex: none; width: 42px; height: 42px; min-height: 42px; }
+  .speed-ctl { flex: 1; width: auto; justify-content: center; gap: 8px; }
   .speed-ctl .icon-btn { display: none; }
   #speed-range { flex: 1; min-width: 0; accent-color: var(--accent); }
   #speed-val { width: 58px; }
