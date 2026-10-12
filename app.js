@@ -354,11 +354,22 @@ async function renderLibrary(app, token) {
   try { bundledEnabled = localStorage.getItem('sr-bundled-sheets') === 'on'; } catch (_) {}
   const imported = bundledEnabled ? await importBundledGuitarSheets() : 0;
   if (imported) songs = await listSongs();
-  songs.sort((a, b) => {
-    const byName = String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN', { numeric: true, sensitivity: 'base' });
-    if (byName) return byName;
-    return String(a.sourceKey || a.id || '').localeCompare(String(b.sourceKey || b.id || ''), 'zh-CN', { numeric: true });
-  });
+  let sortMode = 'recent', viewMode = 'album';
+  try {
+    sortMode = localStorage.getItem('sr-library-sort') || 'recent';
+    viewMode = localStorage.getItem('sr-library-view') || 'album';
+  } catch (_) {}
+  const nameCompare = (a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN', { numeric: true, sensitivity: 'base' });
+  function sortSongs() {
+    songs.sort((a, b) => {
+      let result = 0;
+      if (sortMode === 'name') result = nameCompare(a, b);
+      else if (sortMode === 'count') result = (Number(b.useCount) || 0) - (Number(a.useCount) || 0);
+      else result = (Number(b.lastUsedAt) || 0) - (Number(a.lastUsedAt) || 0);
+      return result || nameCompare(a, b) || String(a.sourceKey || a.id || '').localeCompare(String(b.sourceKey || b.id || ''), 'zh-CN', { numeric: true });
+    });
+  }
+  sortSongs();
   if (token !== renderToken) return;
 
   app.innerHTML =
@@ -375,11 +386,22 @@ async function renderLibrary(app, token) {
           '<button class="btn primary" id="btn-new">' + icon('plus') + ' 新建曲谱</button>' +
         '</div>' +
       '</div>' +
-      '<div class="library-search">' +
-        '<input id="song-search" type="search" placeholder="搜索歌曲名、歌手或来源…" autocomplete="off" aria-label="搜索曲谱">' +
-        '<span id="search-count" class="muted"></span>' +
+      '<div class="library-toolbar">' +
+        '<div class="library-search">' +
+          '<input id="song-search" type="search" placeholder="搜索歌曲名、歌手或来源…" autocomplete="off" aria-label="搜索曲谱">' +
+          '<span id="search-count" class="muted"></span>' +
+        '</div>' +
+        '<label class="library-select">排序<select id="library-sort">' +
+          '<option value="recent"' + (sortMode === 'recent' ? ' selected' : '') + '>最近使用</option>' +
+          '<option value="name"' + (sortMode === 'name' ? ' selected' : '') + '>名称</option>' +
+          '<option value="count"' + (sortMode === 'count' ? ' selected' : '') + '>使用次数</option>' +
+        '</select></label>' +
+        '<label class="library-select">展示<select id="library-view">' +
+          '<option value="album"' + (viewMode === 'album' ? ' selected' : '') + '>相册框</option>' +
+          '<option value="list"' + (viewMode === 'list' ? ' selected' : '') + '>简化列表</option>' +
+        '</select></label>' +
       '</div>' +
-      '<div class="songs-grid" id="songs-grid"></div>' +
+      '<div class="songs-grid ' + (viewMode === 'list' ? 'list-view' : '') + '" id="songs-grid"></div>' +
       '<div class="empty small" id="search-empty" style="display:none"><p>没有找到匹配的曲谱</p><span>换一个歌曲名或歌手试试</span></div>' +
       '<div class="empty" id="empty-state" style="display:none">' + icon('music', 42) +
         '<p>曲谱库还是空的</p>' +
@@ -398,7 +420,7 @@ async function renderLibrary(app, token) {
         '<div class="song-card" data-id="' + esc(s.id) + '">' +
           '<div class="cover">' + icon('music', 44) + '<img alt="曲谱封面"></div>' +
           '<div class="song-info"><b class="song-name">' + esc(s.name) + '</b>' +
-          '<span class="muted">' + esc(s.artist || '未知歌手') + ' · <span class="page-n">…</span> 页</span></div>' +
+          '<span class="muted">' + esc(s.artist || '未知歌手') + ' · <span class="page-n">…</span> 页 · 使用 ' + (Number(s.useCount) || 0) + ' 次</span></div>' +
           '<div class="song-actions">' +
             '<button class="btn primary sm act-play">' + icon('play', 15) + ' 演奏</button>' +
             '<button class="btn ghost sm act-edit">管理</button>' +
@@ -428,6 +450,15 @@ async function renderLibrary(app, token) {
   }
   searchInput.addEventListener('input', filterSongs);
   filterSongs();
+
+  $('#library-sort').addEventListener('change', e => {
+    try { localStorage.setItem('sr-library-sort', e.target.value); } catch (_) {}
+    render();
+  });
+  $('#library-view').addEventListener('change', e => {
+    try { localStorage.setItem('sr-library-view', e.target.value); } catch (_) {}
+    gridEl.classList.toggle('list-view', e.target.value === 'list');
+  });
 
   $('#bundled-sheets-toggle').addEventListener('change', async e => {
     const enabled = e.target.checked;
@@ -484,7 +515,12 @@ function bindSongCard(card, song, token) {
     }
   }).catch(() => {});
 
-  $('.act-play', card).onclick = () => navigate('#/play/' + song.id);
+  $('.act-play', card).onclick = async () => {
+    song.lastUsedAt = Date.now();
+    song.useCount = (Number(song.useCount) || 0) + 1;
+    await saveSong(song);
+    navigate('#/play/' + song.id);
+  };
   $('.act-edit', card).onclick = () => navigate('#/song/' + song.id);
   $('.act-del', card).onclick = async () => {
     if (!confirm('确定删除曲谱「' + song.name + '」？该操作不可恢复。')) return;

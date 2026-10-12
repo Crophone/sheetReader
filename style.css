@@ -256,12 +256,19 @@ img { -webkit-user-drag: none; }
 
 .library-view { overflow-y: auto; }
 
-.library-search {
+.library-toolbar {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 16px;
+}
+.library-search {
+  flex: 1;
+  min-width: 180px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 .library-search input {
   flex: 1;
@@ -276,6 +283,17 @@ img { -webkit-user-drag: none; }
 }
 .library-search input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .library-search #search-count { flex: none; min-width: 62px; text-align: right; font-size: 12px; }
+.library-select { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.library-select select {
+  padding: 8px 28px 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--panel);
+  font: inherit;
+  outline: none;
+}
+.library-select select:focus { border-color: var(--accent); }
 
 .songs-grid {
   display: grid;
@@ -336,6 +354,21 @@ img { -webkit-user-drag: none; }
   padding: 10px 14px 14px;
 }
 .song-actions .act-play { flex: 1; }
+
+/* 简化列表：一首曲谱一行，保留首图小缩略图和主要操作。 */
+.songs-grid.list-view { display: flex; flex-direction: column; gap: 8px; }
+.songs-grid.list-view .song-card {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 74px;
+}
+.songs-grid.list-view .song-card:hover { transform: none; }
+.songs-grid.list-view .cover { height: 72px; border: 0; border-right: 1px solid var(--border); }
+.songs-grid.list-view .cover svg { width: 26px; height: 26px; }
+.songs-grid.list-view .song-info { padding: 8px 12px; }
+.songs-grid.list-view .song-actions { padding: 8px 12px; align-items: center; }
+.songs-grid.list-view .song-actions .act-play { flex: none; }
 
 /* ---------------- 空状态 / 错误 ---------------- */
 .empty {
@@ -907,8 +940,14 @@ img { -webkit-user-drag: none; }
   .topbar-actions { gap: 7px; }
   .effect-label { display: none; }
   .lib-head { align-items: stretch; margin-bottom: 14px; }
-  .library-search { gap: 8px; margin-bottom: 12px; }
+  .library-toolbar { flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .library-search { flex-basis: 100%; gap: 8px; }
   .library-search input { font-size: 16px; }
+  .library-select { flex: 1; }
+  .library-select select { flex: 1; min-width: 0; }
+  .songs-grid.list-view .song-card { grid-template-columns: 60px minmax(0, 1fr); }
+  .songs-grid.list-view .cover { height: 70px; grid-row: span 2; }
+  .songs-grid.list-view .song-actions { grid-column: 2; padding-top: 2px; }
   .lib-actions { width: 100%; flex-wrap: wrap; }
   .library-import-toggle { width: 100%; justify-content: center; min-height: 44px; }
   .lib-actions .btn { flex: 1; }
