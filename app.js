@@ -350,7 +350,9 @@ function showStorageError(app, err) {
 /* ---------------- 曲谱库视图 ---------------- */
 async function renderLibrary(app, token) {
   let songs = await listSongs();
-  const imported = await importBundledGuitarSheets();
+  let bundledEnabled = false;
+  try { bundledEnabled = localStorage.getItem('sr-bundled-sheets') === 'on'; } catch (_) {}
+  const imported = bundledEnabled ? await importBundledGuitarSheets() : 0;
   if (imported) songs = await listSongs();
   songs.sort((a, b) => {
     const byName = String(a.name || '').localeCompare(String(b.name || ''), 'zh-CN', { numeric: true, sensitivity: 'base' });
@@ -365,6 +367,10 @@ async function renderLibrary(app, token) {
         '<div><h2>我的曲谱库</h2>' +
         '<p class="muted">上传多张六线谱自动合并 · 演奏时曲谱随进度自动滚动，解放双手</p></div>' +
         '<div class="lib-actions">' +
+          '<label class="library-import-toggle" title="选择是否导入仓库“吉他谱”文件夹中的歌单">' +
+            '<input type="checkbox" id="bundled-sheets-toggle"' + (bundledEnabled ? ' checked' : '') + '>' +
+            '<span class="switch" aria-hidden="true"></span><span>导入“吉他谱”歌单</span>' +
+          '</label>' +
           '<button class="btn ghost" id="btn-demo">' + icon('music') + ' 载入示例曲谱</button>' +
           '<button class="btn primary" id="btn-new">' + icon('plus') + ' 新建曲谱</button>' +
         '</div>' +
@@ -422,6 +428,23 @@ async function renderLibrary(app, token) {
   }
   searchInput.addEventListener('input', filterSongs);
   filterSongs();
+
+  $('#bundled-sheets-toggle').addEventListener('change', async e => {
+    const enabled = e.target.checked;
+    try { localStorage.setItem('sr-bundled-sheets', enabled ? 'on' : 'off'); } catch (_) {}
+    e.target.disabled = true;
+    if (enabled) {
+      toast('正在导入“吉他谱”目录歌单…');
+      const count = await importBundledGuitarSheets();
+      toast(count ? '已导入 ' + count + ' 首曲谱' : '曲谱歌单已是最新');
+    } else {
+      const current = await listSongs();
+      const bundled = current.filter(s => s.sourceKey && s.sourceKey.startsWith('bundled:'));
+      for (const song of bundled) await deleteSong(song.id);
+      toast('已关闭并移除“吉他谱”目录歌单');
+    }
+    if (token === renderToken) render();
+  });
 
   $('#btn-new').onclick = () => openNewSongModal(async (name, artist) => {
     const song = await saveSong({
