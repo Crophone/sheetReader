@@ -966,21 +966,44 @@ async function renderPlayer(app, songId, token) {
     return (lo + hi) / 2;
   }
 
-  function applyScroll() {
-    const vh = scroller.clientHeight;
-    const maxY = Math.max(0, contentHeight() - vh);
-    /* 开场先把谱面第一行从顶部送到演奏提示横杠，之后才开始向下推进曲谱。 */
-    const leadIn = clamp(60 / playBpm * 4, 1.5, 5);
-    let y = 0;
-    if (progress < leadIn) {
-      y = -PH_RATIO * vh * (1 - progress / leadIn);
-    } else {
-      const bodyRatio = clamp((progress - leadIn) / Math.max(0.001, duration - leadIn), 0, 1);
-      y = bodyRatio * maxY;
+  function leadInSec() { return clamp(60 / playBpm * 4, 1.5, 5); }
+
+  /* 播放时间映射到曲谱位置：开场预留 4 拍，正文慢速，页尾空白快速掠过。 */
+  function progressToScrollY(value) {
+    const maxY = Math.max(0, contentHeight() - scroller.clientHeight);
+    const lead = leadInSec();
+    if (value <= lead) return 0;
+    const bodyRatio = clamp((value - lead) / Math.max(0.001, duration - lead), 0, 1);
+    const sheetY = timeToSheetY(bodyRatio);
+    return clamp(sheetY - PH_RATIO * scroller.clientHeight, 0, maxY);
+  }
+
+  function scrollYToProgress(y) {
+    const maxY = Math.max(0, contentHeight() - scroller.clientHeight);
+    if (!maxY) return 0;
+    /* 滚动位置代表演奏提示线所指向的谱面内容点。 */
+    const sheetY = clamp(y + PH_RATIO * scroller.clientHeight, 0, contentHeight());
+    return leadInSec() + sheetYToTime(sheetY) * Math.max(0, duration - leadInSec());
+  }
+
+  function updatePlayheadPosition() {
+    const lead = leadInSec();
+    const ratio = lead > 0 ? clamp(progress / lead, 0, 1) : 1;
+    const top = PH_RATIO * ratio * 100;
+    const playhead = $('.playhead');
+    const highlight = $('.measure-highlight');
+    if (playhead) playhead.style.top = top + '%';
+    if (highlight) {
+      const offset = matchMedia('(max-width: 767px)').matches ? 46 :
+        (matchMedia('(max-height: 500px) and (orientation: landscape)').matches ? 38 : 54);
+      highlight.style.top = 'calc(' + top + '% - ' + offset + 'px)';
     }
-    if (progress >= duration) y = maxY;
+  }
+
+  function applyScroll() {
+    updatePlayheadPosition();
     autoScrolling = true;
-    scroller.scrollTop = y;
+    scroller.scrollTop = progressToScrollY(progress);
   }
 
   function updateHud() {
@@ -1063,7 +1086,11 @@ async function renderPlayer(app, songId, token) {
   zoomInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); commitZoomInput(); zoomInput.blur(); }
   });
-  seek.addEventListener('input', e => setProgress(e.target.value / 1000 * duration));
+  seek.addEventListener('input', e => {
+    const value = e.target.value / 1000 * duration;
+    setProgress(value);
+    lastTs = 0;
+  });
 
   /* BPM 设置：原版值可由查询服务回填，也允许校正；播放 BPM 持久保存并实时改变滚动时长。 */
   const originalBpmEl = $('#original-bpm');
@@ -1156,11 +1183,8 @@ async function renderPlayer(app, songId, token) {
   searchOriginalBpm(false);
 
   function progressFromScroll() {
-    const H = contentHeight();
-    const vh = scroller.clientHeight;
-    const maxY = Math.max(0, H - vh);
-    if (H <= 0 || vh <= 0) return;
-    progress = maxY > 0 ? clamp(scroller.scrollTop / maxY, 0, 1) * duration : 0;
+    if (contentHeight() <= 0 || scroller.clientHeight <= 0) return;
+    progress = clamp(scrollYToProgress(scroller.scrollTop), 0, duration);
     lastTs = 0;
     updateHud();
   }
@@ -1188,19 +1212,39 @@ async function renderPlayer(app, songId, token) {
     progressFromScroll();
     manualRaf = requestAnimationFrame(animateManualScroll);
   }
-  function smoothScrollTo(y) {
+  function smoothScrollTo(y, targetProgress) {
     const maxY = Math.max(0, contentHeight() - scroller.clientHeight);
     manualTargetY = clamp(y, 0, maxY);
+    if (Number.isFinite(targetProgress)) {
+      progress = clamp(targetProgress, 0, duration);
+      updateHud();
+    }
+    lastTs = 0;
     if (!manualRaf) manualRaf = requestAnimationFrame(animateManualScroll);
   }
 
-  /* 鼠标滚轮改变目标进度；连续滚轮事件累加目标位置。 */
+  function seekToSheetY(sheetY, smooth) {
+    const vh = scroller.clientHeight;
+    const maxY = Math.max(0, contentHeight() - vh);
+    /* 将点击的谱面内容点移动到固定演奏提示线处。 */
+    const targetScrollY = clamp(sheetY - PH_RATIO * vh, 0, maxY);
+    const target = clamp(scrollYToProgress(targetScrollY), 0, duration);
+    if (smooth) smoothScrollTo(targetScrollY, target);
+    else setProgress(target);
+  }
+
+  function seekScrollPosition(y) {
+    const targetY = clamp(y, 0, Math.max(0, contentHeight() - scroller.clientHeight));
+    smoothScrollTo(targetY, scrollYToProgress(targetY));
+  }
+
+  /* 鼠标滚轮改变目标位置，平滑对齐演奏提示线且保持播放状态。 */
   scroller.addEventListener('wheel', e => {
     if (Math.abs(e.deltaY) < 0.1) return;
     e.preventDefault();
     const vh = scroller.clientHeight;
     const unit = e.deltaMode === 1 ? 18 : e.deltaMode === 2 ? vh : 1;
-    smoothScrollTo(manualTargetY + e.deltaY * unit * MANUAL_SCROLL_FACTOR);
+    seekScrollPosition(manualTargetY + e.deltaY * unit * MANUAL_SCROLL_FACTOR);
   }, { passive: false });
 
   /* 单指拖动采用较高位移倍率，并以动画帧平滑追随手指。 */
@@ -1225,11 +1269,43 @@ async function renderPlayer(app, songId, token) {
     const dy = t.clientY - touchY;
     if (Math.abs(dy) > 3) touchMoved = true;
     e.preventDefault();
-    smoothScrollTo(touchScrollTop - dy * MANUAL_SCROLL_FACTOR);
+    seekScrollPosition(touchScrollTop - dy * MANUAL_SCROLL_FACTOR);
   }, { passive: false });
   function finishTouch() { touchId = null; lastTs = 0; }
   scroller.addEventListener('touchend', finishTouch, { passive: true });
   scroller.addEventListener('touchcancel', finishTouch, { passive: true });
+
+  /* 鼠标按住谱面拖动，行为与手指拖动一致。 */
+  let pointerDrag = false;
+  let pointerStartY = 0;
+  let pointerScrollTop = 0;
+  let pointerMoved = false;
+  scroller.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'touch' || e.button !== 0) return;
+    pointerDrag = true;
+    pointerMoved = false;
+    pointerStartY = e.clientY;
+    pointerScrollTop = scroller.scrollTop;
+    manualTargetY = scroller.scrollTop;
+    scroller.setPointerCapture(e.pointerId);
+    scroller.classList.add('drag-seeking');
+  });
+  scroller.addEventListener('pointermove', e => {
+    if (!pointerDrag) return;
+    const dy = e.clientY - pointerStartY;
+    if (Math.abs(dy) > 3) pointerMoved = true;
+    e.preventDefault();
+    seekScrollPosition(pointerScrollTop - dy * MANUAL_SCROLL_FACTOR);
+  });
+  function finishPointer(e) {
+    if (!pointerDrag) return;
+    pointerDrag = false;
+    lastTs = 0;
+    scroller.classList.remove('drag-seeking');
+    try { scroller.releasePointerCapture(e.pointerId); } catch (_) {}
+  }
+  scroller.addEventListener('pointerup', finishPointer);
+  scroller.addEventListener('pointercancel', finishPointer);
 
   /* 点击谱面任意位置：跳转到对应进度 */
   const playerBar = $('.player-bar');
@@ -1241,14 +1317,18 @@ async function renderPlayer(app, songId, token) {
     controlsTimer = setTimeout(() => playerBar.classList.remove('mobile-visible'), 4000);
   }
   scroller.addEventListener('click', e => {
-    if (touchMoved) { touchMoved = false; return; }
+    if (touchMoved || pointerMoved) { touchMoved = false; pointerMoved = false; return; }
+  
     if (matchMedia('(max-width: 767px)').matches) {
       showMobileControls();
       return;
     }
+    const isTouchLayout = matchMedia('(max-width: 1366px) and (pointer: coarse)').matches;
+    if (isTouchLayout) showMobileControls();
     const r = sheet.getBoundingClientRect();
     if (r.height <= 0) return;
-    setProgress(sheetYToTime(clamp(e.clientY - r.top, 0, contentHeight())) * duration);
+    const clickedSheetY = clamp(e.clientY - r.top, 0, contentHeight());
+    seekToSheetY(clickedSheetY, true);
   });
 
   /* 键盘快捷键 */
@@ -1256,8 +1336,16 @@ async function renderPlayer(app, songId, token) {
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
-    else if (e.key === 'ArrowRight') { e.preventDefault(); setProgress(progress + 5); }
-    else if (e.key === 'ArrowLeft') { e.preventDefault(); setProgress(progress - 5); }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      const target = clamp(progress + 5, 0, duration);
+      smoothScrollTo(progressToScrollY(target), target);
+    }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const target = clamp(progress - 5, 0, duration);
+      smoothScrollTo(progressToScrollY(target), target);
+    }
     else if (e.key === '+' || e.key === '=') bumpSpeed(0.05);
     else if (e.key === '-') bumpSpeed(-0.05);
   }

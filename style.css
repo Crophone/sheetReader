@@ -766,12 +766,14 @@ img { -webkit-user-drag: none; }
 .scroller {
   flex: 1;
   overflow: auto;
+  cursor: grab;
   min-width: 0;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   touch-action: none;
   scrollbar-gutter: stable;
 }
+.scroller.drag-seeking { cursor: grabbing; user-select: none; }
 .sheet {
   display: flex;
   flex-direction: column;
