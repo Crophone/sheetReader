@@ -986,22 +986,8 @@ async function renderPlayer(app, songId, token) {
     return leadInSec() + sheetYToTime(sheetY) * Math.max(0, duration - leadInSec());
   }
 
-  function updatePlayheadPosition() {
-    const lead = leadInSec();
-    const ratio = lead > 0 ? clamp(progress / lead, 0, 1) : 1;
-    const top = PH_RATIO * ratio * 100;
-    const playhead = $('.playhead');
-    const highlight = $('.measure-highlight');
-    if (playhead) playhead.style.top = top + '%';
-    if (highlight) {
-      const offset = matchMedia('(max-width: 767px)').matches ? 46 :
-        (matchMedia('(max-height: 500px) and (orientation: landscape)').matches ? 38 : 54);
-      highlight.style.top = 'calc(' + top + '% - ' + offset + 'px)';
-    }
-  }
-
   function applyScroll() {
-    updatePlayheadPosition();
+    /* 演奏提示线与粉色区域始终保持 CSS 中的固定位置。 */
     autoScrolling = true;
     scroller.scrollTop = progressToScrollY(progress);
   }
@@ -1060,8 +1046,7 @@ async function renderPlayer(app, songId, token) {
           /* 显示 100% 对应当前 55% 的实际宽度。 */
           sheet.style.width = zoom * 0.55 + '%';
     }
- 
-
+       
     $('#zoom-val').value = String(zoom);
     requestAnimationFrame(applyScroll);
   }
