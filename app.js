@@ -1040,12 +1040,20 @@ async function renderPlayer(app, songId, token) {
     zoom = clamp(Math.round(Number(z) || 100), 10, 500);
 
    if (matchMedia('(max-width: 767px)').matches) {
+              console.log("手机端");
           sheet.style.width = zoom  + '%';
     }
+    else if (matchMedia('(max-width:  1024 px)').matches) {
+              console.log("平板端");
+          sheet.style.width = zoom * 0.8 + '%';
+    } 
     else{
+          console.log("PC端");
           /* 显示 100% 对应当前 55% 的实际宽度。 */
           sheet.style.width = zoom * 0.55 + '%';
-    }
+    } 
+    
+
        
     $('#zoom-val').value = String(zoom);
     requestAnimationFrame(applyScroll);
