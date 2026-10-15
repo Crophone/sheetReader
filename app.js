@@ -1052,8 +1052,16 @@ async function renderPlayer(app, songId, token) {
 
   function setZoom(z) {
     zoom = clamp(Math.round(Number(z) || 100), 10, 500);
-    /* 显示 100% 对应当前 55% 的实际宽度。 */
-    sheet.style.width = zoom * 0.55 + '%';
+
+   if (matchMedia('(max-width: 767px)').matches) {
+          sheet.style.width = zoom  + '%';
+    }
+    else{
+          /* 显示 100% 对应当前 55% 的实际宽度。 */
+          sheet.style.width = zoom * 0.55 + '%';
+    }
+ 
+
     $('#zoom-val').value = String(zoom);
     requestAnimationFrame(applyScroll);
   }
